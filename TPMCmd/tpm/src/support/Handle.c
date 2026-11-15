@@ -1,3 +1,37 @@
+/* Microsoft Reference Implementation for TPM 2.0
+ *
+ *  The copyright in this software is being made available under the BSD License,
+ *  included below. This software may be subject to other third party and
+ *  contributor rights, including patent rights, and no such rights are granted
+ *  under this license.
+ *
+ *  Copyright (c) Microsoft Corporation
+ *
+ *  All rights reserved.
+ *
+ *  BSD License
+ *
+ *  Redistribution and use in source and binary forms, with or without modification,
+ *  are permitted provided that the following conditions are met:
+ *
+ *  Redistributions of source code must retain the above copyright notice, this list
+ *  of conditions and the following disclaimer.
+ *
+ *  Redistributions in binary form must reproduce the above copyright notice, this
+ *  list of conditions and the following disclaimer in the documentation and/or
+ *  other materials provided with the distribution.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ *  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ *  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ *  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 //** Description
 // This file contains the functions that return the type of a handle.
 
@@ -9,8 +43,9 @@
 //*** HandleGetType()
 // This function returns the type of a handle which is the MSO of the handle.
 TPM_HT
-HandleGetType(TPM_HANDLE handle  // IN: a handle to be checked
-)
+HandleGetType(
+    TPM_HANDLE       handle         // IN: a handle to be checked
+    )
 {
     // return the upper bytes of input data
     return (TPM_HT)((handle & HR_RANGE_MASK) >> HR_SHIFT);
@@ -21,8 +56,9 @@ HandleGetType(TPM_HANDLE handle  // IN: a handle to be checked
 // is the next higher value. If there is no handle with the input value and there
 // is no next higher value, it returns 0:
 TPM_HANDLE
-NextPermanentHandle(TPM_HANDLE inHandle  // IN: the handle to check
-)
+NextPermanentHandle(
+    TPM_HANDLE       inHandle       // IN: the handle to check
+    )
 {
     // If inHandle is below the start of the range of permanent handles
     // set it to the start and scan from there
@@ -32,18 +68,6 @@ NextPermanentHandle(TPM_HANDLE inHandle  // IN: the handle to check
     // or go out of range
     for(; inHandle <= TPM_RH_LAST; inHandle++)
     {
-        // Skip over gaps in the reserved handle space.
-        if(inHandle > TPM_RH_FW_NULL && inHandle < SVN_OWNER_FIRST)
-            inHandle = SVN_OWNER_FIRST;
-        if(inHandle > SVN_OWNER_FIRST && inHandle <= SVN_OWNER_LAST)
-            inHandle = SVN_ENDORSEMENT_FIRST;
-        if(inHandle > SVN_ENDORSEMENT_FIRST && inHandle <= SVN_ENDORSEMENT_LAST)
-            inHandle = SVN_PLATFORM_FIRST;
-        if(inHandle > SVN_PLATFORM_FIRST && inHandle <= SVN_PLATFORM_LAST)
-            inHandle = SVN_NULL_FIRST;
-        if(inHandle > SVN_NULL_FIRST)
-            inHandle = TPM_RH_LAST;
-
         switch(inHandle)
         {
             case TPM_RH_OWNER:
@@ -53,25 +77,14 @@ NextPermanentHandle(TPM_HANDLE inHandle  // IN: the handle to check
             case TPM_RH_ENDORSEMENT:
             case TPM_RH_PLATFORM:
             case TPM_RH_PLATFORM_NV:
-#if FW_LIMITED_SUPPORT
-            case TPM_RH_FW_OWNER:
-            case TPM_RH_FW_ENDORSEMENT:
-            case TPM_RH_FW_PLATFORM:
-            case TPM_RH_FW_NULL:
-#endif
-#if SVN_LIMITED_SUPPORT
-            case TPM_RH_SVN_OWNER_BASE:
-            case TPM_RH_SVN_ENDORSEMENT_BASE:
-            case TPM_RH_SVN_PLATFORM_BASE:
-            case TPM_RH_SVN_NULL_BASE:
-#endif
-#if VENDOR_PERMANENT_AUTH_ENABLED == YES
-            case VENDOR_PERMANENT_AUTH_HANDLE:
+#ifdef  VENDOR_PERMANENT
+            case VENDOR_PERMANENT:
 #endif
 // Each of the implemented ACT
-#define ACT_IMPLEMENTED_CASE(N) case TPM_RH_ACT_##N:
+#define ACT_IMPLEMENTED_CASE(N)                                                     \
+            case TPM_RH_ACT_##N:
 
-                FOR_EACH_ACT(ACT_IMPLEMENTED_CASE)
+            FOR_EACH_ACT(ACT_IMPLEMENTED_CASE)
 
                 return inHandle;
                 break;
@@ -91,13 +104,14 @@ NextPermanentHandle(TPM_HANDLE inHandle  // IN: the handle to check
 //      YES         if there are more handles available
 //      NO          all the available handles has been returned
 TPMI_YES_NO
-PermanentCapGetHandles(TPM_HANDLE   handle,     // IN: start handle
-                       UINT32       count,      // IN: count of returned handles
-                       TPML_HANDLE* handleList  // OUT: list of handle
-)
+PermanentCapGetHandles(
+    TPM_HANDLE       handle,        // IN: start handle
+    UINT32           count,         // IN: count of returned handles
+    TPML_HANDLE     *handleList     // OUT: list of handle
+    )
 {
-    TPMI_YES_NO more = NO;
-    UINT32      i;
+    TPMI_YES_NO     more = NO;
+    UINT32          i;
 
     pAssert(HandleGetType(handle) == TPM_HT_PERMANENT);
 
@@ -105,11 +119,11 @@ PermanentCapGetHandles(TPM_HANDLE   handle,     // IN: start handle
     handleList->count = 0;
 
     // The maximum count of handles we may return is MAX_CAP_HANDLES
-    if(count > MAX_CAP_HANDLES)
-        count = MAX_CAP_HANDLES;
+    if(count > MAX_CAP_HANDLES) count = MAX_CAP_HANDLES;
 
     // Iterate permanent handle range
-    for(i = NextPermanentHandle(handle); i != 0; i = NextPermanentHandle(i + 1))
+    for(i = NextPermanentHandle(handle);
+        i != 0; i = NextPermanentHandle(i + 1))
     {
         if(handleList->count < count)
         {
@@ -129,25 +143,6 @@ PermanentCapGetHandles(TPM_HANDLE   handle,     // IN: start handle
     return more;
 }
 
-//*** PermanentCapGetOneHandle()
-// This function returns whether a permanent handle exists.
-BOOL PermanentCapGetOneHandle(TPM_HANDLE handle)  // IN: handle
-{
-    UINT32 i;
-
-    pAssert(HandleGetType(handle) == TPM_HT_PERMANENT);
-
-    // Iterate permanent handle range
-    for(i = NextPermanentHandle(handle); i != 0; i = NextPermanentHandle(i + 1))
-    {
-        if(i == handle)
-        {
-            return TRUE;
-        }
-    }
-    return FALSE;
-}
-
 //*** PermanentHandleGetPolicy()
 // This function returns a list of the permanent handles of PCR, started from
 // 'handle'. If 'handle' is larger than the largest permanent handle, an empty list
@@ -156,12 +151,13 @@ BOOL PermanentCapGetOneHandle(TPM_HANDLE handle)  // IN: handle
 //      YES         if there are more handles available
 //      NO          all the available handles has been returned
 TPMI_YES_NO
-PermanentHandleGetPolicy(TPM_HANDLE handle,  // IN: start handle
-                         UINT32     count,   // IN: max count of returned handles
-                         TPML_TAGGED_POLICY* policyList  // OUT: list of handle
-)
+PermanentHandleGetPolicy(
+    TPM_HANDLE           handle,        // IN: start handle
+    UINT32               count,         // IN: max count of returned handles
+    TPML_TAGGED_POLICY  *policyList     // OUT: list of handle
+    )
 {
-    TPMI_YES_NO more = NO;
+    TPMI_YES_NO     more = NO;
 
     pAssert(HandleGetType(handle) == TPM_HT_PERMANENT);
 
@@ -169,28 +165,28 @@ PermanentHandleGetPolicy(TPM_HANDLE handle,  // IN: start handle
     policyList->count = 0;
 
     // The maximum count of policies we may return is MAX_TAGGED_POLICIES
-    if(count > MAX_TAGGED_POLICIES)
+    if(count > MAX_TAGGED_POLICIES) 
         count = MAX_TAGGED_POLICIES;
 
     // Iterate permanent handle range
-    for(handle = NextPermanentHandle(handle); handle != 0;
+    for(handle = NextPermanentHandle(handle); 
+        handle != 0; 
         handle = NextPermanentHandle(handle + 1))
     {
-        TPM2B_DIGEST policyDigest;
-        TPM_ALG_ID   policyAlg;
+        TPM2B_DIGEST    policyDigest;
+        TPM_ALG_ID      policyAlg;
         // Check to see if this permanent handle has a policy
         policyAlg = EntityGetAuthPolicy(handle, &policyDigest);
         if(policyAlg == TPM_ALG_ERROR)
-            continue;
+           continue;
         if(policyList->count < count)
         {
             // If we have not filled up the return list, add this
             // policy to the list;
-            policyList->policies[policyList->count].handle             = handle;
+            policyList->policies[policyList->count].handle = handle;
             policyList->policies[policyList->count].policyHash.hashAlg = policyAlg;
-            MemoryCopy(&policyList->policies[policyList->count].policyHash.digest,
-                       policyDigest.t.buffer,
-                       policyDigest.t.size);
+            MemoryCopy(&policyList->policies[policyList->count].policyHash.digest, 
+                       policyDigest.t.buffer, policyDigest.t.size);
             policyList->count++;
         }
         else
@@ -202,31 +198,4 @@ PermanentHandleGetPolicy(TPM_HANDLE handle,  // IN: start handle
         }
     }
     return more;
-}
-
-//*** PermanentHandleGetOnePolicy()
-// This function returns a permanent handle's policy, if present.
-BOOL PermanentHandleGetOnePolicy(TPM_HANDLE          handle,  // IN: handle
-                                 TPMS_TAGGED_POLICY* policy   // OUT: tagged policy
-)
-{
-    pAssert(HandleGetType(handle) == TPM_HT_PERMANENT);
-
-    if(NextPermanentHandle(handle) == handle)
-    {
-        TPM2B_DIGEST policyDigest;
-        TPM_ALG_ID   policyAlg;
-        // Check to see if this permanent handle has a policy
-        policyAlg = EntityGetAuthPolicy(handle, &policyDigest);
-        if(policyAlg == TPM_ALG_ERROR)
-        {
-            return FALSE;
-        }
-        policy->handle             = handle;
-        policy->policyHash.hashAlg = policyAlg;
-        MemoryCopy(
-            &policy->policyHash.digest, policyDigest.t.buffer, policyDigest.t.size);
-        return TRUE;
-    }
-    return FALSE;
 }

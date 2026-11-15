@@ -1,3 +1,37 @@
+/* Microsoft Reference Implementation for TPM 2.0
+ *
+ *  The copyright in this software is being made available under the BSD License,
+ *  included below. This software may be subject to other third party and
+ *  contributor rights, including patent rights, and no such rights are granted
+ *  under this license.
+ *
+ *  Copyright (c) Microsoft Corporation
+ *
+ *  All rights reserved.
+ *
+ *  BSD License
+ *
+ *  Redistribution and use in source and binary forms, with or without modification,
+ *  are permitted provided that the following conditions are met:
+ *
+ *  Redistributions of source code must retain the above copyright notice, this list
+ *  of conditions and the following disclaimer.
+ *
+ *  Redistributions in binary form must reproduce the above copyright notice, this
+ *  list of conditions and the following disclaimer in the documentation and/or
+ *  other materials provided with the distribution.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ *  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ *  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ *  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 //** Introduction
 // This file contains the functions for testing various command properties.
 
@@ -8,10 +42,10 @@
 
 // Set the default value for CC_VEND if not already set
 #ifndef CC_VEND
-#  define CC_VEND (TPM_CC)(0x20000000)
+#define     CC_VEND     (TPM_CC)(0x20000000)
 #endif
 
-typedef UINT16 ATTRIBUTE_TYPE;
+typedef UINT16          ATTRIBUTE_TYPE;
 
 // The following file is produced from the command tables in part 3 of the
 // specification. It defines the attributes for each of the commands.
@@ -20,7 +54,7 @@ typedef UINT16 ATTRIBUTE_TYPE;
 // included in the specification so that their is no ambiguity about the
 // table containing the information being the normative definition.
 #define _COMMAND_CODE_ATTRIBUTES_
-#include "CommandAttributeData.h"
+#include    "CommandAttributeData.h"
 
 //** Command Attribute Functions
 
@@ -35,9 +69,12 @@ typedef UINT16 ATTRIBUTE_TYPE;
 //  UNIMPLEMENTED_COMMAND_INDEX     command is not implemented
 //  other                           index of the command
 #if !COMPRESSED_LISTS
-static COMMAND_INDEX NextImplementedIndex(COMMAND_INDEX commandIndex)
+static COMMAND_INDEX
+NextImplementedIndex(
+    COMMAND_INDEX       commandIndex
+    )
 {
-    for(; commandIndex < COMMAND_COUNT; commandIndex++)
+    for(;commandIndex < COMMAND_COUNT; commandIndex++)
     {
         if(s_commandAttributes[commandIndex] & IS_IMPLEMENTED)
             return commandIndex;
@@ -45,7 +82,7 @@ static COMMAND_INDEX NextImplementedIndex(COMMAND_INDEX commandIndex)
     return UNIMPLEMENTED_COMMAND_INDEX;
 }
 #else
-#  define NextImplementedIndex(x) (x)
+#define NextImplementedIndex(x) (x)
 #endif
 
 //*** GetClosestCommandIndex()
@@ -55,16 +92,17 @@ static COMMAND_INDEX NextImplementedIndex(COMMAND_INDEX commandIndex)
 //  UNIMPLEMENTED_COMMAND_INDEX     command is not implemented
 //  other                           index of a command
 COMMAND_INDEX
-GetClosestCommandIndex(TPM_CC commandCode  // IN: the command code to start at
-)
+GetClosestCommandIndex(
+    TPM_CC           commandCode    // IN: the command code to start at
+    )
 {
-    BOOL          vendor      = (commandCode & CC_VEND) != 0;
-    COMMAND_INDEX searchIndex = (COMMAND_INDEX)commandCode;
+    BOOL                vendor = (commandCode & CC_VEND) != 0;
+    COMMAND_INDEX       searchIndex = (COMMAND_INDEX)commandCode;
 
     // The commandCode is a UINT32 and the search index is UINT16. We are going to
     // search for a match but need to make sure that the commandCode value is not
     // out of range. To do this, need to clear the vendor bit of the commandCode
-    // (if set) and compare the result to the 16-bit searchIndex value. If it is
+    // (if set) and compare the result to the 16-bit searchIndex value. If it is 
     // out of range, indicate that the command is not implemented
     if((commandCode & ~CC_VEND) != searchIndex)
         return UNIMPLEMENTED_COMMAND_INDEX;
@@ -75,41 +113,41 @@ GetClosestCommandIndex(TPM_CC commandCode  // IN: the command code to start at
     if(vendor)
     {
 #if VENDOR_COMMAND_ARRAY_SIZE > 0
-        COMMAND_INDEX commandIndex;
-        COMMAND_INDEX min;
-        COMMAND_INDEX max;
-        int           diff;
-#  if LIBRARY_COMMAND_ARRAY_SIZE == COMMAND_COUNT
-#    error "Constants are not consistent."
-#  endif
+        COMMAND_INDEX       commandIndex;
+        COMMAND_INDEX       min;
+        COMMAND_INDEX       max;
+        int                 diff;
+#if LIBRARY_COMMAND_ARRAY_SIZE == COMMAND_COUNT
+#error "Constants are not consistent."
+#endif
         // Check to see if the value is equal to or below the minimum
         // entry.
         // Note: Put this check first so that the typical case of only one vendor-
         // specific command doesn't waste any more time.
-        if(GET_ATTRIBUTE(s_ccAttr[LIBRARY_COMMAND_ARRAY_SIZE], TPMA_CC, commandIndex)
-           >= searchIndex)
+        if(GET_ATTRIBUTE(s_ccAttr[LIBRARY_COMMAND_ARRAY_SIZE], TPMA_CC, 
+                         commandIndex) >= searchIndex)
         {
             // the vendor array is always assumed to be packed so there is
             // no need to check to see if the command is implemented
             return LIBRARY_COMMAND_ARRAY_SIZE;
         }
         // See if this is out of range on the top
-        if(GET_ATTRIBUTE(s_ccAttr[COMMAND_COUNT - 1], TPMA_CC, commandIndex)
+        if(GET_ATTRIBUTE(s_ccAttr[COMMAND_COUNT - 1], TPMA_CC, commandIndex) 
            < searchIndex)
         {
             return UNIMPLEMENTED_COMMAND_INDEX;
         }
-        commandIndex = UNIMPLEMENTED_COMMAND_INDEX;  // Needs initialization to keep
-                                                     // compiler happy
-        min  = LIBRARY_COMMAND_ARRAY_SIZE;           // first vendor command
-        max  = COMMAND_COUNT - 1;                    // last vendor command
-        diff = 1;                                    // needs initialization to keep
-                                                     // compiler happy
+        commandIndex = UNIMPLEMENTED_COMMAND_INDEX; // Needs initialization to keep
+                                                    // compiler happy
+        min = LIBRARY_COMMAND_ARRAY_SIZE;       // first vendor command
+        max = COMMAND_COUNT - 1;                // last vendor command
+        diff = 1;                               // needs initialization to keep
+                                                // compiler happy
         while(min <= max)
         {
             commandIndex = (min + max + 1) / 2;
             diff = GET_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, commandIndex)
-                   - searchIndex;
+                - searchIndex;
             if(diff == 0)
                 return commandIndex;
             if(diff > 0)
@@ -129,15 +167,15 @@ GetClosestCommandIndex(TPM_CC commandCode  // IN: the command code to start at
         // that the index was within range.
         return commandIndex + 1;
 #else
-        // If there are no vendor commands so anything with the vendor bit set is out
-        // of range
+    // If there are no vendor commands so anything with the vendor bit set is out
+    // of range
         return UNIMPLEMENTED_COMMAND_INDEX;
 #endif
     }
     // Get here if the V-Bit was not set in 'commandCode'
 
-    if(GET_ATTRIBUTE(s_ccAttr[LIBRARY_COMMAND_ARRAY_SIZE - 1], TPMA_CC, commandIndex)
-       < searchIndex)
+    if(GET_ATTRIBUTE(s_ccAttr[LIBRARY_COMMAND_ARRAY_SIZE - 1], TPMA_CC, 
+                     commandIndex) < searchIndex)
     {
         // requested index is out of the range to the top
 #if VENDOR_COMMAND_ARRAY_SIZE > 0
@@ -163,24 +201,23 @@ GetClosestCommandIndex(TPM_CC commandCode  // IN: the command code to start at
     else
     {
 #if COMPRESSED_LISTS
-        COMMAND_INDEX commandIndex = UNIMPLEMENTED_COMMAND_INDEX;
-        COMMAND_INDEX min          = 0;
-        COMMAND_INDEX max          = LIBRARY_COMMAND_ARRAY_SIZE - 1;
-        int           diff         = 1;
-#  if LIBRARY_COMMAND_ARRAY_SIZE == 0
-#    error "Something is terribly wrong"
-#  endif
+        COMMAND_INDEX       commandIndex = UNIMPLEMENTED_COMMAND_INDEX;
+        COMMAND_INDEX       min = 0;
+        COMMAND_INDEX       max = LIBRARY_COMMAND_ARRAY_SIZE - 1;
+        int                 diff = 1;
+#if LIBRARY_COMMAND_ARRAY_SIZE == 0
+#error  "Something is terribly wrong"
+#endif
         // The s_ccAttr array contains an extra entry at the end (a zero value).
         // Don't count this as an array entry. This means that max should start
         // out pointing to the last valid entry in the array which is - 2
-        pAssert(
-            max
-            == (sizeof(s_ccAttr) / sizeof(TPMA_CC) - VENDOR_COMMAND_ARRAY_SIZE - 2));
+        pAssert(max == (sizeof(s_ccAttr) / sizeof(TPMA_CC)
+                        - VENDOR_COMMAND_ARRAY_SIZE - 2));
         while(min <= max)
         {
             commandIndex = (min + max + 1) / 2;
-            diff = GET_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, commandIndex)
-                   - searchIndex;
+            diff = GET_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, 
+                                 commandIndex) - searchIndex;
             if(diff == 0)
                 return commandIndex;
             if(diff > 0)
@@ -203,8 +240,8 @@ GetClosestCommandIndex(TPM_CC commandCode  // IN: the command code to start at
         // The list is not compressed so offset into the array by the command
         // code value of the first entry in the list. Then go find the first
         // implemented command.
-        return NextImplementedIndex(
-            searchIndex - (COMMAND_INDEX)s_ccAttr[0].commandIndex);
+        return NextImplementedIndex(searchIndex
+                                    - (COMMAND_INDEX)s_ccAttr[0].commandIndex);
 #endif
     }
 }
@@ -216,13 +253,14 @@ GetClosestCommandIndex(TPM_CC commandCode  // IN: the command code to start at
 //  UNIMPLEMENTED_COMMAND_INDEX     command is not implemented
 //  other                           index of the command
 COMMAND_INDEX
-CommandCodeToCommandIndex(TPM_CC commandCode  // IN: the command code to look up
-)
+CommandCodeToCommandIndex(
+    TPM_CC           commandCode    // IN: the command code to look up
+    )
 {
     // Extract the low 16-bits of the command code to get the starting search index
-    COMMAND_INDEX searchIndex = (COMMAND_INDEX)commandCode;
-    BOOL          vendor      = (commandCode & CC_VEND) != 0;
-    COMMAND_INDEX commandIndex;
+    COMMAND_INDEX       searchIndex = (COMMAND_INDEX)commandCode;
+    BOOL                vendor = (commandCode & CC_VEND) != 0;
+    COMMAND_INDEX       commandIndex;
 #if !COMPRESSED_LISTS
     if(!vendor)
     {
@@ -245,7 +283,7 @@ CommandCodeToCommandIndex(TPM_CC commandCode  // IN: the command code to look up
     // requested, then the command is not implemented.
     if(commandIndex != UNIMPLEMENTED_COMMAND_INDEX)
     {
-        if((GET_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, commandIndex)
+        if((GET_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, commandIndex) 
             != searchIndex)
            || (IS_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, V)) != vendor)
             commandIndex = UNIMPLEMENTED_COMMAND_INDEX;
@@ -259,8 +297,9 @@ CommandCodeToCommandIndex(TPM_CC commandCode  // IN: the command code to look up
 //  UNIMPLEMENTED_COMMAND_INDEX     no more implemented commands
 //  other                           the index of the next implemented command
 COMMAND_INDEX
-GetNextCommandIndex(COMMAND_INDEX commandIndex  // IN: the starting index
-)
+GetNextCommandIndex(
+    COMMAND_INDEX    commandIndex   // IN: the starting index
+    )
 {
     while(++commandIndex < COMMAND_COUNT)
     {
@@ -275,10 +314,12 @@ GetNextCommandIndex(COMMAND_INDEX commandIndex  // IN: the starting index
 //*** GetCommandCode()
 // This function returns the commandCode associated with the command index
 TPM_CC
-GetCommandCode(COMMAND_INDEX commandIndex  // IN: the command index
-)
+GetCommandCode(
+    COMMAND_INDEX    commandIndex   // IN: the command index
+    )
 {
-    TPM_CC commandCode = GET_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, commandIndex);
+    TPM_CC           commandCode = GET_ATTRIBUTE(s_ccAttr[commandIndex],
+                                                 TPMA_CC, commandIndex);
     if(IS_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, V))
         commandCode += CC_VEND;
     return commandCode;
@@ -294,14 +335,15 @@ GetCommandCode(COMMAND_INDEX commandIndex  // IN: the command index
 //  AUTH_ADMIN      admin role authorization is required
 //  AUTH_DUP        duplication role authorization is required
 AUTH_ROLE
-CommandAuthRole(COMMAND_INDEX commandIndex,  // IN: command index
-                UINT32        handleIndex    // IN: handle index (zero based)
-)
+CommandAuthRole(
+    COMMAND_INDEX    commandIndex,  // IN: command index
+    UINT32           handleIndex    // IN: handle index (zero based)
+    )
 {
     if(0 == handleIndex)
     {
         // Any authorization role set?
-        COMMAND_ATTRIBUTES properties = s_commandAttributes[commandIndex];
+        COMMAND_ATTRIBUTES  properties = s_commandAttributes[commandIndex];
 
         if(properties & HANDLE_1_USER)
             return AUTH_USER;
@@ -325,12 +367,13 @@ CommandAuthRole(COMMAND_INDEX commandIndex,  // IN: command index
 //  0       encryption not allowed
 //  2       size field is two bytes
 //  4       size field is four bytes
-int EncryptSize(COMMAND_INDEX commandIndex  // IN: command index
-)
+int
+EncryptSize(
+    COMMAND_INDEX    commandIndex   // IN: command index
+    )
 {
-    return ((s_commandAttributes[commandIndex] & ENCRYPT_2)   ? 2
-            : (s_commandAttributes[commandIndex] & ENCRYPT_4) ? 4
-                                                              : 0);
+    return ((s_commandAttributes[commandIndex] & ENCRYPT_2) ? 2 : 
+            (s_commandAttributes[commandIndex] & ENCRYPT_4) ? 4 : 0);
 }
 
 //*** DecryptSize()
@@ -340,12 +383,13 @@ int EncryptSize(COMMAND_INDEX commandIndex  // IN: command index
 //  0       encryption not allowed
 //  2       size field is two bytes
 //  4       size field is four bytes
-int DecryptSize(COMMAND_INDEX commandIndex  // IN: command index
-)
+int
+DecryptSize(
+    COMMAND_INDEX    commandIndex   // IN: command index
+    )
 {
-    return ((s_commandAttributes[commandIndex] & DECRYPT_2)   ? 2
-            : (s_commandAttributes[commandIndex] & DECRYPT_4) ? 4
-                                                              : 0);
+    return ((s_commandAttributes[commandIndex] & DECRYPT_2) ? 2 : 
+            (s_commandAttributes[commandIndex] & DECRYPT_4) ? 4 : 0);
 }
 
 //*** IsSessionAllowed()
@@ -357,15 +401,20 @@ int DecryptSize(COMMAND_INDEX commandIndex  // IN: command index
 //  Return Type: BOOL
 //      TRUE(1)         session is allowed with this command
 //      FALSE(0)        session is not allowed with this command
-BOOL IsSessionAllowed(COMMAND_INDEX commandIndex  // IN: the command to be checked
-)
+BOOL
+IsSessionAllowed(
+    COMMAND_INDEX    commandIndex   // IN: the command to be checked
+    )
 {
     return ((s_commandAttributes[commandIndex] & NO_SESSIONS) == 0);
 }
 
 //*** IsHandleInResponse()
 // This function determines if a command has a handle in the response
-BOOL IsHandleInResponse(COMMAND_INDEX commandIndex)
+BOOL
+IsHandleInResponse(
+    COMMAND_INDEX    commandIndex
+    )
 {
     return ((s_commandAttributes[commandIndex] & R_HANDLE) != 0);
 }
@@ -373,10 +422,12 @@ BOOL IsHandleInResponse(COMMAND_INDEX commandIndex)
 //*** IsWriteOperation()
 // Checks to see if an operation will write to an NV Index and is subject to being
 // blocked by read-lock
-BOOL IsWriteOperation(COMMAND_INDEX commandIndex  // IN: Command to check
-)
+BOOL
+IsWriteOperation(
+    COMMAND_INDEX    commandIndex   // IN: Command to check
+    )
 {
-#ifdef WRITE_LOCK
+#ifdef  WRITE_LOCK
     return ((s_commandAttributes[commandIndex] & WRITE_LOCK) != 0);
 #else
     if(!IS_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, V))
@@ -384,18 +435,18 @@ BOOL IsWriteOperation(COMMAND_INDEX commandIndex  // IN: Command to check
         switch(GET_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, commandIndex))
         {
             case TPM_CC_NV_Write:
-#  if CC_NV_Increment
+#if CC_NV_Increment
             case TPM_CC_NV_Increment:
-#  endif
-#  if CC_NV_SetBits
+#endif
+#if CC_NV_SetBits
             case TPM_CC_NV_SetBits:
-#  endif
-#  if CC_NV_Extend
+#endif
+#if CC_NV_Extend
             case TPM_CC_NV_Extend:
-#  endif
-#  if CC_AC_Send
+#endif
+#if CC_AC_Send
             case TPM_CC_AC_Send:
-#  endif
+#endif
             // NV write lock counts as a write operation for authorization purposes.
             // We check to see if the NV is write locked before we do the
             // authorization. If it is locked, we fail the command early.
@@ -412,10 +463,12 @@ BOOL IsWriteOperation(COMMAND_INDEX commandIndex  // IN: Command to check
 //*** IsReadOperation()
 // Checks to see if an operation will write to an NV Index and is
 // subject to being blocked by write-lock.
-BOOL IsReadOperation(COMMAND_INDEX commandIndex  // IN: Command to check
-)
+BOOL
+IsReadOperation(
+    COMMAND_INDEX    commandIndex   // IN: Command to check
+    )
 {
-#ifdef READ_LOCK
+#ifdef  READ_LOCK
     return ((s_commandAttributes[commandIndex] & READ_LOCK) != 0);
 #else
 
@@ -446,20 +499,21 @@ BOOL IsReadOperation(COMMAND_INDEX commandIndex  // IN: Command to check
 //      YES         more command attributes are available
 //      NO          no more command attributes are available
 TPMI_YES_NO
-CommandCapGetCCList(TPM_CC commandCode,  // IN: start command code
-                    UINT32 count,        // IN: maximum count for number of entries in
-                                         //     'commandList'
-                    TPML_CCA* commandList  // OUT: list of TPMA_CC
-)
+CommandCapGetCCList(
+    TPM_CC           commandCode,   // IN: start command code
+    UINT32           count,         // IN: maximum count for number of entries in
+                                    //     'commandList'
+    TPML_CCA        *commandList    // OUT: list of TPMA_CC
+    )
 {
-    TPMI_YES_NO   more = NO;
-    COMMAND_INDEX commandIndex;
+    TPMI_YES_NO      more = NO;
+    COMMAND_INDEX    commandIndex;
 
     // initialize output handle list count
     commandList->count = 0;
 
     for(commandIndex = GetClosestCommandIndex(commandCode);
-        commandIndex != UNIMPLEMENTED_COMMAND_INDEX;
+    commandIndex != UNIMPLEMENTED_COMMAND_INDEX;
         commandIndex = GetNextCommandIndex(commandIndex))
     {
 #if !COMPRESSED_LISTS
@@ -470,8 +524,8 @@ CommandCapGetCCList(TPM_CC commandCode,  // IN: start command code
         if(commandList->count < count)
         {
             // If the list is not full, add the attributes for this command.
-            commandList->commandAttributes[commandList->count] =
-                s_ccAttr[commandIndex];
+            commandList->commandAttributes[commandList->count]
+                = s_ccAttr[commandIndex];
             commandList->count++;
         }
         else
@@ -485,29 +539,15 @@ CommandCapGetCCList(TPM_CC commandCode,  // IN: start command code
     return more;
 }
 
-//*** CommandCapGetOneCC()
-// This function checks whether a command is implemented, and returns its
-// attributes if so.
-BOOL CommandCapGetOneCC(TPM_CC   commandCode,       // IN: command code
-                        TPMA_CC* commandAttributes  // OUT: command attributes
-)
-{
-    COMMAND_INDEX commandIndex = CommandCodeToCommandIndex(commandCode);
-    if(commandIndex != UNIMPLEMENTED_COMMAND_INDEX)
-    {
-        *commandAttributes = s_ccAttr[commandIndex];
-        return TRUE;
-    }
-    return FALSE;
-}
-
 //*** IsVendorCommand()
 // Function indicates if a command index references a vendor command.
 //  Return Type: BOOL
 //      TRUE(1)         command is a vendor command
 //      FALSE(0)        command is not a vendor command
-BOOL IsVendorCommand(COMMAND_INDEX commandIndex  // IN: command index to check
-)
+BOOL
+IsVendorCommand(
+    COMMAND_INDEX    commandIndex   // IN: command index to check
+    )
 {
     return (IS_ATTRIBUTE(s_ccAttr[commandIndex], TPMA_CC, V));
 }

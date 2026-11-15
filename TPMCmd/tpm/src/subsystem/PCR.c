@@ -1,3 +1,37 @@
+/* Microsoft Reference Implementation for TPM 2.0
+ *
+ *  The copyright in this software is being made available under the BSD License,
+ *  included below. This software may be subject to other third party and
+ *  contributor rights, including patent rights, and no such rights are granted
+ *  under this license.
+ *
+ *  Copyright (c) Microsoft Corporation
+ *
+ *  All rights reserved.
+ *
+ *  BSD License
+ *
+ *  Redistribution and use in source and binary forms, with or without modification,
+ *  are permitted provided that the following conditions are met:
+ *
+ *  Redistributions of source code must retain the above copyright notice, this list
+ *  of conditions and the following disclaimer.
+ *
+ *  Redistributions in binary form must reproduce the above copyright notice, this
+ *  list of conditions and the following disclaimer in the documentation and/or
+ *  other materials provided with the distribution.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ *  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ *  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ *  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 //** Introduction
 //
 // This function contains the functions needed for PCR access and manipulation.
@@ -16,10 +50,27 @@
 #define PCR_C
 #include "Tpm.h"
 
-// verify values from pcrstruct.h. not <= because group #0 is reserved
-// indicating no auth/policy support
-TPM_STATIC_ASSERT(NUM_AUTHVALUE_PCR_GROUP < (1 << MAX_PCR_GROUP_BITS));
-TPM_STATIC_ASSERT(NUM_POLICY_PCR_GROUP < (1 << MAX_PCR_GROUP_BITS));
+// The initial value of PCR attributes.  The value of these fields should be
+// consistent with PC Client specification
+// In this implementation, we assume the total number of implemented PCR is 24.
+static const PCR_Attributes s_initAttributes[] =
+{
+    // PCR 0 - 15, static RTM
+    {1, 0, 0x1F}, {1, 0, 0x1F}, {1, 0, 0x1F}, {1, 0, 0x1F},
+    {1, 0, 0x1F}, {1, 0, 0x1F}, {1, 0, 0x1F}, {1, 0, 0x1F},
+    {1, 0, 0x1F}, {1, 0, 0x1F}, {1, 0, 0x1F}, {1, 0, 0x1F},
+    {1, 0, 0x1F}, {1, 0, 0x1F}, {1, 0, 0x1F}, {1, 0, 0x1F},
+
+    {0, 0x0F, 0x1F},        // PCR 16, Debug
+    {0, 0x10, 0x1C},        // PCR 17, Locality 4
+    {0, 0x10, 0x1C},        // PCR 18, Locality 3
+    {0, 0x10, 0x0C},        // PCR 19, Locality 2
+    {0, 0x14, 0x0E},        // PCR 20, Locality 1
+    {0, 0x14, 0x04},        // PCR 21, Dynamic OS
+    {0, 0x14, 0x04},        // PCR 22, Dynamic OS
+    {0, 0x0F, 0x1F},        // PCR 23, Application specific
+    {0, 0x0F, 0x1F}         // PCR 24, testing policy
+};
 
 //** Functions
 
@@ -31,30 +82,25 @@ TPM_STATIC_ASSERT(NUM_POLICY_PCR_GROUP < (1 << MAX_PCR_GROUP_BITS));
 //  Return Type: BOOL
 //      TRUE(1)         PCR belongs an authorization group
 //      FALSE(0)        PCR does not belong an authorization group
-BOOL PCRBelongsAuthGroup(TPMI_DH_PCR handle,     // IN: handle of PCR
-                         UINT32*     groupIndex  // OUT: group array index if PCR
-                         //      belongs to a group that allows authValue.  If PCR
-                         //      does not belong to an authorization
-                         //      group, the value in this parameter is zero
-)
+BOOL
+PCRBelongsAuthGroup(
+    TPMI_DH_PCR      handle,        // IN: handle of PCR
+    UINT32          *groupIndex     // OUT: group index if PCR belongs a
+                                    //      group that allows authValue.  If PCR
+                                    //      does not belong to an authorization
+                                    //      group, the value in this parameter is
+                                    //      invalid
+    )
 {
-    *groupIndex = 0;
-
 #if defined NUM_AUTHVALUE_PCR_GROUP && NUM_AUTHVALUE_PCR_GROUP > 0
     // Platform specification determines to which authorization group a PCR belongs
     // (if any). In this implementation, we assume there is only
     // one authorization group which contains PCR[20-22].  If the platform
     // specification requires differently, the implementation should be changed
     // accordingly
-    UINT32         pcr = handle - PCR_FIRST;
-    PCR_Attributes currentPcrAttributes =
-        _platPcr__GetPcrInitializationAttributes(pcr);
-
-    if(currentPcrAttributes.authValuesGroup != 0)
+    if(handle >= 20 && handle <= 22)
     {
-        // turn 1-based group number into actual array index expected by callers
-        *groupIndex = currentPcrAttributes.authValuesGroup - 1;
-        pAssert_BOOL(*groupIndex < NUM_AUTHVALUE_PCR_GROUP);
+        *groupIndex = 0;
         return TRUE;
     }
 
@@ -67,30 +113,27 @@ BOOL PCRBelongsAuthGroup(TPMI_DH_PCR handle,     // IN: handle of PCR
 // authorization in order to modify the PCR.  If it does, 'groupIndex' is set
 // to value of the group index.  This feature of PCR is decided by the platform
 // specification.
-// return type: BOOL
-//      TRUE:           PCR belongs a policy group
-//      FALSE:          PCR does not belong a policy group
-BOOL PCRBelongsPolicyGroup(
-    TPMI_DH_PCR handle,     // IN: handle of PCR
-    UINT32*     groupIndex  // OUT: group index if PCR belongs a group that
-                            //     allows policy.  If PCR does not belong to
-                            //     a policy group, the value in this
-                            //     parameter is zero
-)
+//
+//  Return Type: BOOL
+//      TRUE(1)         PCR belongs to a policy group
+//      FALSE(0)        PCR does not belong to a policy group
+BOOL
+PCRBelongsPolicyGroup(
+    TPMI_DH_PCR      handle,        // IN: handle of PCR
+    UINT32          *groupIndex     // OUT: group index if PCR belongs a group that
+                                    //     allows policy.  If PCR does not belong to
+                                    //     a policy group, the value in this
+                                    //     parameter is invalid
+    )
 {
-    *groupIndex = 0;
-
 #if defined NUM_POLICY_PCR_GROUP && NUM_POLICY_PCR_GROUP > 0
     // Platform specification decides if a PCR belongs to a policy group and
-    // belongs to which group.
-    UINT32         pcr = handle - PCR_FIRST;
-    PCR_Attributes currentPcrAttributes =
-        _platPcr__GetPcrInitializationAttributes(pcr);
-    if(currentPcrAttributes.policyAuthGroup != 0)
+    // belongs to which group.  In this implementation, we assume there is only
+    // one policy group which contains PCR20-22.  If the platform specification
+    // requires differently, the implementation should be changed accordingly
+    if(handle >= 20 && handle <= 22)
     {
-        // turn 1-based group number into actual array index expected by callers
-        *groupIndex = currentPcrAttributes.policyAuthGroup - 1;
-        pAssert_BOOL(*groupIndex < NUM_POLICY_PCR_GROUP);
+        *groupIndex = 0;
         return TRUE;
     }
 #endif
@@ -99,32 +142,39 @@ BOOL PCRBelongsPolicyGroup(
 
 //*** PCRBelongsTCBGroup()
 // This function indicates if a PCR belongs to the TCB group.
-// return type: BOOL
-//      TRUE:           PCR belongs to TCB group
-//      FALSE:          PCR does not belong to TCB group
-static BOOL PCRBelongsTCBGroup(TPMI_DH_PCR handle  // IN: handle of PCR
-)
+//
+//  Return Type: BOOL
+//      TRUE(1)         PCR belongs to a TCB group
+//      FALSE(0)        PCR does not belong to a TCB group
+static BOOL
+PCRBelongsTCBGroup(
+    TPMI_DH_PCR      handle         // IN: handle of PCR
+    )
 {
 #if ENABLE_PCR_NO_INCREMENT == YES
-    // Platform specification decides if a PCR belongs to a TCB group.
-    UINT32         pcr = handle - PCR_FIRST;
-    PCR_Attributes currentPcrAttributes =
-        _platPcr__GetPcrInitializationAttributes(pcr);
-    return currentPcrAttributes.doNotIncrementPcrCounter;
-#else
-    return FALSE;
+    // Platform specification decides if a PCR belongs to a TCB group.  In this
+    // implementation, we assume PCR[20-22] belong to TCB group.  If the platform
+    // specification requires differently, the implementation should be
+    // changed accordingly
+    if(handle >= 20 && handle <= 22)
+        return TRUE;
+
 #endif
+    return FALSE;
 }
 
 //*** PCRPolicyIsAvailable()
 // This function indicates if a policy is available for a PCR.
-// return type: BOOL
-//      TRUE        the PCR may be authorized by policy
-//      FALSE       the PCR does not allow policy
-BOOL PCRPolicyIsAvailable(TPMI_DH_PCR handle  // IN: PCR handle
-)
+//
+//  Return Type: BOOL
+//      TRUE(1)         the PCR may be authorized by policy
+//      FALSE(0)        the PCR does not allow policy
+BOOL
+PCRPolicyIsAvailable(
+    TPMI_DH_PCR      handle         // IN: PCR handle
+    )
 {
-    UINT32 groupIndex;
+    UINT32          groupIndex;
 
     return PCRBelongsPolicyGroup(handle, &groupIndex);
 }
@@ -132,10 +182,12 @@ BOOL PCRPolicyIsAvailable(TPMI_DH_PCR handle  // IN: PCR handle
 //*** PCRGetAuthValue()
 // This function is used to access the authValue of a PCR.  If PCR does not
 // belong to an authValue group, an EmptyAuth will be returned.
-TPM2B_AUTH* PCRGetAuthValue(TPMI_DH_PCR handle  // IN: PCR handle
-)
+TPM2B_AUTH *
+PCRGetAuthValue(
+    TPMI_DH_PCR      handle         // IN: PCR handle
+    )
 {
-    UINT32 groupIndex;
+    UINT32      groupIndex;
 
     if(PCRBelongsAuthGroup(handle, &groupIndex))
     {
@@ -152,11 +204,12 @@ TPM2B_AUTH* PCRGetAuthValue(TPMI_DH_PCR handle  // IN: PCR handle
 // 'policy' to the authorization policy and returns the hash algorithm for policy
 //  If the PCR does not allow a policy, TPM_ALG_NULL is returned.
 TPMI_ALG_HASH
-PCRGetAuthPolicy(TPMI_DH_PCR   handle,  // IN: PCR handle
-                 TPM2B_DIGEST* policy   // OUT: policy of PCR
-)
+PCRGetAuthPolicy(
+    TPMI_DH_PCR      handle,        // IN: PCR handle
+    TPM2B_DIGEST    *policy         // OUT: policy of PCR
+    )
 {
-    UINT32 groupIndex;
+    UINT32           groupIndex;
 
     if(PCRBelongsPolicyGroup(handle, &groupIndex))
     {
@@ -170,17 +223,20 @@ PCRGetAuthPolicy(TPMI_DH_PCR   handle,  // IN: PCR handle
     }
 }
 
-//*** PCRManufacture()
+//*** PCRSimStart()
 // This function is used to initialize the policies when a TPM is manufactured.
 // This function would only be called in a manufacturing environment or in
 // a TPM simulator.
-void PCRManufacture(void)
+void
+PCRSimStart(
+    void
+    )
 {
-    UINT32 i;
+    UINT32  i;
 #if defined NUM_POLICY_PCR_GROUP && NUM_POLICY_PCR_GROUP > 0
     for(i = 0; i < NUM_POLICY_PCR_GROUP; i++)
     {
-        gp.pcrPolicies.hashAlg[i]       = TPM_ALG_NULL;
+        gp.pcrPolicies.hashAlg[i] = TPM_ALG_NULL;
         gp.pcrPolicies.policy[i].t.size = 0;
     }
 #endif
@@ -194,20 +250,16 @@ void PCRManufacture(void)
     // receiving any TPM2_PCR_Allocate command to change this configuration
     // When the simulation environment starts, we allocate all the PCRs
     for(gp.pcrAllocated.count = 0; gp.pcrAllocated.count < HASH_COUNT;
-        gp.pcrAllocated.count++)
+    gp.pcrAllocated.count++)
     {
-        TPM_ALG_ID currentBank  = CryptHashGetAlgByIndex(gp.pcrAllocated.count);
-        BOOL       isBankActive = _platPcr_IsPcrBankDefaultActive(currentBank);
+        gp.pcrAllocated.pcrSelections[gp.pcrAllocated.count].hash
+            = CryptHashGetAlgByIndex(gp.pcrAllocated.count);
 
-        gp.pcrAllocated.pcrSelections[gp.pcrAllocated.count].hash = currentBank;
-
-        gp.pcrAllocated.pcrSelections[gp.pcrAllocated.count].sizeofSelect =
-            PCR_SELECT_MAX;
+        gp.pcrAllocated.pcrSelections[gp.pcrAllocated.count].sizeofSelect
+            = PCR_SELECT_MAX;
         for(i = 0; i < PCR_SELECT_MAX; i++)
-        {
-            gp.pcrAllocated.pcrSelections[gp.pcrAllocated.count].pcrSelect[i] =
-                isBankActive ? 0xFF : 0;
-        }
+            gp.pcrAllocated.pcrSelections[gp.pcrAllocated.count].pcrSelect[i]
+            = 0xFF;
     }
 
     // Store the initial configuration to NV
@@ -224,23 +276,25 @@ void PCRManufacture(void)
 //  Return Type: BYTE *
 //      NULL            no such algorithm
 //      != NULL         pointer to the 0th byte of the 0th PCR
-static BYTE* GetSavedPcrPointer(TPM_ALG_ID alg,      // IN: algorithm for bank
-                                UINT32     pcrIndex  // IN: PCR index in PCR_SAVE
-)
+static BYTE *
+GetSavedPcrPointer(
+    TPM_ALG_ID       alg,           // IN: algorithm for bank
+    UINT32           pcrIndex       // IN: PCR index in PCR_SAVE
+    )
 {
-    BYTE* retVal = NULL;
+    BYTE            *retVal;
     switch(alg)
     {
-#define HASH_CASE(HASH, Hash)               \
-    case TPM_ALG_##HASH:                    \
-        retVal = gc.pcrSave.Hash[pcrIndex]; \
+#define HASH_CASE(HASH, Hash)                       \
+        case TPM_ALG_##HASH:                        \
+            retVal = gc.pcrSave.Hash[pcrIndex];     \
         break;
 
         FOR_EACH_HASH(HASH_CASE)
 #undef HASH_CASE
 
         default:
-            FAIL_NULL(FATAL_ERROR_INTERNAL);
+            FAIL(FATAL_ERROR_INTERNAL);
     }
     return retVal;
 }
@@ -251,12 +305,14 @@ static BYTE* GetSavedPcrPointer(TPM_ALG_ID alg,      // IN: algorithm for bank
 //  Return Type: BOOL
 //      TRUE(1)         PCR is allocated
 //      FALSE(0)        PCR is not allocated
-BOOL PcrIsAllocated(UINT32        pcr,     // IN: The number of the PCR
-                    TPMI_ALG_HASH hashAlg  // IN: The PCR algorithm
-)
+BOOL
+PcrIsAllocated(
+    UINT32           pcr,           // IN: The number of the PCR
+    TPMI_ALG_HASH    hashAlg        // IN: The PCR algorithm
+    )
 {
-    UINT32 i;
-    BOOL   allocated = FALSE;
+    UINT32               i;
+    BOOL                 allocated = FALSE;
 
     if(pcr < IMPLEMENTATION_PCR)
     {
@@ -265,8 +321,7 @@ BOOL PcrIsAllocated(UINT32        pcr,     // IN: The number of the PCR
             if(gp.pcrAllocated.pcrSelections[i].hash == hashAlg)
             {
                 if(((gp.pcrAllocated.pcrSelections[i].pcrSelect[pcr / 8])
-                    & (1 << (pcr % 8)))
-                   != 0)
+                    & (1 << (pcr % 8))) != 0)
                     allocated = TRUE;
                 else
                     allocated = FALSE;
@@ -277,83 +332,39 @@ BOOL PcrIsAllocated(UINT32        pcr,     // IN: The number of the PCR
     return allocated;
 }
 
-// Get pointer to particular PCR from bank (array)
-// CAUTION: This function does not validate the pcrNumber
-// vs the size of the array.
-// See Also: GetPcrPointerIfAllocated
-static BYTE* GetPcrPointerFromPcrArray(PCR*       pPcrArray,
-                                       TPM_ALG_ID alg,       // IN: algorithm for bank
-                                       UINT32     pcrNumber  // IN: PCR number
-)
-{
-    switch(alg)
-    {
-#if ALG_SHA1
-        case TPM_ALG_SHA1:
-            return pPcrArray[pcrNumber].Sha1Pcr;
-#endif
-#if ALG_SHA256
-        case TPM_ALG_SHA256:
-            return pPcrArray[pcrNumber].Sha256Pcr;
-#endif
-#if ALG_SHA384
-        case TPM_ALG_SHA384:
-            return pPcrArray[pcrNumber].Sha384;
-#endif
-#if ALG_SHA512
-        case TPM_ALG_SHA512:
-            return pPcrArray[pcrNumber].Sha512;
-#endif
-#if ALG_SM3_256
-        case TPM_ALG_SM3_256:
-            return pPcrArray[pcrNumber].Sm3_256;
-#endif
-#if ALG_SHA3_256
-        case TPM_ALG_SHA3_256:
-            return pPcrArray[pcrNumber].Sha3_256;
-#endif
-#if ALG_SHA3_384
-        case TPM_ALG_SHA3_384:
-            return pPcrArray[pcrNumber].Sha3_384;
-#endif
-#if ALG_SHA3_512
-        case TPM_ALG_SHA3_512:
-            return pPcrArray[pcrNumber].Sha3_512;
-#endif
-        default:
-            FAIL(FATAL_ERROR_INTERNAL);
-            break;
-    }
-    return NULL;
-}
-
-BYTE* GetPcrPointerIfAllocated(PCR*       pPcrArray,
-                               TPM_ALG_ID alg,       // IN: algorithm for bank
-                               UINT32     pcrNumber  // IN: PCR number
-)
-{
-    //
-    if(!PcrIsAllocated(pcrNumber, alg))
-        return NULL;
-
-    return GetPcrPointerFromPcrArray(pPcrArray,
-                                     alg,       // IN: algorithm for bank
-                                     pcrNumber  // IN: PCR number
-    );
-}
-
 //*** GetPcrPointer()
 // This function returns the address of an array of PCR based on the
 // hash algorithm.
 //
 //  Return Type: BYTE *
 //      NULL            no such algorithm
-//      != NULL         pointer to the 0th byte of the requested PCR
-BYTE* GetPcrPointer(TPM_ALG_ID alg,       // IN: algorithm for bank
-                    UINT32     pcrNumber  // IN: PCR number
-)
+//      != NULL         pointer to the 0th byte of the 0th PCR
+static BYTE *
+GetPcrPointer(
+    TPM_ALG_ID       alg,           // IN: algorithm for bank
+    UINT32           pcrNumber      // IN: PCR number
+    )
 {
-    return GetPcrPointerIfAllocated(s_pcrs, alg, pcrNumber);
+    static BYTE     *pcr = NULL;
+//
+    if(!PcrIsAllocated(pcrNumber, alg))
+        return NULL;
+
+    switch(alg)
+    {
+#define HASH_CASE(HASH, Hash)                       \
+        case TPM_ALG_##HASH:                        \
+            pcr = s_pcrs[pcrNumber].Hash##Pcr;      \
+            break;
+
+        FOR_EACH_HASH(HASH_CASE)
+#undef HASH_CASE
+
+        default:
+            FAIL(FATAL_ERROR_INTERNAL);
+            break;
+    }
+    return pcr;
 }
 
 //*** IsPcrSelected()
@@ -363,12 +374,13 @@ BYTE* GetPcrPointer(TPM_ALG_ID alg,       // IN: algorithm for bank
 //  Return Type: BOOL
 //      TRUE(1)         PCR is selected
 //      FALSE(0)        PCR is not selected
-static BOOL IsPcrSelected(
-    UINT32              pcr,       // IN: The number of the PCR
-    TPMS_PCR_SELECTION* selection  // IN: The selection structure
-)
+static BOOL
+IsPcrSelected(
+    UINT32               pcr,           // IN: The number of the PCR
+    TPMS_PCR_SELECTION  *selection      // IN: The selection structure
+    )
 {
-    BOOL selected;
+    BOOL                 selected;
     selected = (pcr < IMPLEMENTATION_PCR
                 && ((selection->pcrSelect[pcr / 8]) & (1 << (pcr % 8))) != 0);
     return selected;
@@ -377,11 +389,13 @@ static BOOL IsPcrSelected(
 //*** FilterPcr()
 // This function modifies a PCR selection array based on the implemented
 // PCR.
-static void FilterPcr(TPMS_PCR_SELECTION* selection  // IN: input PCR selection
-)
+static void
+FilterPcr(
+    TPMS_PCR_SELECTION  *selection      // IN: input PCR selection
+    )
 {
-    UINT32              i;
-    TPMS_PCR_SELECTION* allocated = NULL;
+    UINT32     i;
+    TPMS_PCR_SELECTION      *allocated = NULL;
 
     // If size of select is less than PCR_SELECT_MAX, zero the unspecified PCR
     for(i = selection->sizeofSelect; i < PCR_SELECT_MAX; i++)
@@ -414,13 +428,15 @@ static void FilterPcr(TPMS_PCR_SELECTION* selection  // IN: input PCR selection
 //*** PcrDrtm()
 // This function does the DRTM and H-CRTM processing it is called from
 // _TPM_Hash_End.
-void PcrDrtm(const TPMI_DH_PCR pcrHandle,  // IN: the index of the PCR to be
-                                           //     modified
-             const TPMI_ALG_HASH hash,     // IN: the bank identifier
-             const TPM2B_DIGEST* digest    // IN: the digest to modify the PCR
-)
+void
+PcrDrtm(
+    const TPMI_DH_PCR        pcrHandle,     // IN: the index of the PCR to be
+                                            //     modified
+    const TPMI_ALG_HASH      hash,          // IN: the bank identifier
+    const TPM2B_DIGEST      *digest         // IN: the digest to modify the PCR
+    )
 {
-    BYTE* pcrData = GetPcrPointer(hash, pcrHandle);
+    BYTE        *pcrData = GetPcrPointer(hash, pcrHandle);
 
     if(pcrData != NULL)
     {
@@ -433,17 +449,20 @@ void PcrDrtm(const TPMI_DH_PCR pcrHandle,  // IN: the index of the PCR to be
             pcrData[digest->t.size - 1] = 4;
         }
         // Now, extend the value
-        PCRExtend(pcrHandle, hash, digest->t.size, (BYTE*)digest->t.buffer);
+        PCRExtend(pcrHandle, hash, digest->t.size, (BYTE *)digest->t.buffer);
     }
 }
 
 //*** PCR_ClearAuth()
 // This function is used to reset the PCR authorization values. It is called
 // on TPM2_Startup(CLEAR) and TPM2_Clear().
-void PCR_ClearAuth(void)
+void
+PCR_ClearAuth(
+    void
+    )
 {
 #if defined NUM_AUTHVALUE_PCR_GROUP && NUM_AUTHVALUE_PCR_GROUP > 0
-    int j;
+    int         j;
     for(j = 0; j < NUM_AUTHVALUE_PCR_GROUP; j++)
     {
         gc.pcrAuthValues.auth[j].t.size = 0;
@@ -453,14 +472,16 @@ void PCR_ClearAuth(void)
 
 //*** PCRStartup()
 // This function initializes the PCR subsystem at TPM2_Startup().
-BOOL PCRStartup(STARTUP_TYPE type,     // IN: startup type
-                BYTE         locality  // IN: startup locality
-)
+BOOL
+PCRStartup(
+    STARTUP_TYPE     type,          // IN: startup type
+    BYTE             locality       // IN: startup locality
+    )
 {
-    UINT32 pcr, j;
-    UINT32 saveIndex = 0;
+    UINT32              pcr, j;
+    UINT32              saveIndex = 0;
 
-    g_pcrReConfig    = FALSE;
+    g_pcrReConfig = FALSE;
 
     // Don't test for SU_RESET because that should be the default when nothing
     // else is selected
@@ -470,22 +491,14 @@ BOOL PCRStartup(STARTUP_TYPE type,     // IN: startup type
         gr.pcrCounter = 0;
     }
 
-    // check the TPM library and platform are properly paired.
-    // if this fails the platform and library are compiled with different
-    // definitions of the number of PCRs - immediately enter FAILURE mode and
-    // return FALSE
-    pAssert_BOOL(_platPcr__NumberOfPcrs() == IMPLEMENTATION_PCR);
-
     // Initialize/Restore PCR values
     for(pcr = 0; pcr < IMPLEMENTATION_PCR; pcr++)
     {
         // On resume, need to know if this PCR had its state saved or not
-        UINT32 stateSaved;
-        // note structure is a bitfield and returned by value.
-        PCR_Attributes currentPcrAttributes =
-            _platPcr__GetPcrInitializationAttributes(pcr);
+        UINT32      stateSaved;
 
-        if(type == SU_RESUME && currentPcrAttributes.stateSave == SET)
+        if(type == SU_RESUME
+           &&  s_initAttributes[pcr].stateSave == SET)
         {
             stateSaved = 1;
         }
@@ -503,9 +516,9 @@ BOOL PCRStartup(STARTUP_TYPE type,     // IN: startup type
         // Iterate each hash algorithm bank
         for(j = 0; j < gp.pcrAllocated.count; j++)
         {
-            TPMI_ALG_HASH hash    = gp.pcrAllocated.pcrSelections[j].hash;
-            BYTE*         pcrData = GetPcrPointer(hash, pcr);
-            UINT16        pcrSize = CryptHashGetDigestSize(hash);
+            TPMI_ALG_HASH    hash = gp.pcrAllocated.pcrSelections[j].hash;
+            BYTE            *pcrData = GetPcrPointer(hash, pcr);
+            UINT16           pcrSize = CryptHashGetDigestSize(hash);
 
             if(pcrData != NULL)
             {
@@ -513,48 +526,27 @@ BOOL PCRStartup(STARTUP_TYPE type,     // IN: startup type
                 if(stateSaved == 1)
                 {
                     // Restore saved PCR value
-                    BYTE* pcrSavedData;
-                    pcrSavedData = GetSavedPcrPointer(hash, saveIndex);
+                    BYTE    *pcrSavedData;
+                    pcrSavedData = GetSavedPcrPointer(
+                        gp.pcrAllocated.pcrSelections[j].hash,
+                        saveIndex);
                     if(pcrSavedData == NULL)
                         return FALSE;
                     MemoryCopy(pcrData, pcrSavedData, pcrSize);
                 }
-                else  // PCR was not restored by state save
+                else
+                    // PCR was not restored by state save
                 {
-                    // give platform opportunity to provide the PCR initialization
-                    // value and it's length. this provides a platform specification
-                    // the ability to change the default values without affecting the
-                    // core library. if the platform doesn't have a value, then the
-                    // result is expected to be TPM_RC_PCR and the size to be 0 and we
-                    // provide the original defaults.
-                    uint16_t pcrLength        = 0;
-                    TPM_RC   pcrInitialResult = _platPcr__GetInitialValueForPcr(
-                        pcr, hash, locality, pcrData, pcrSize, &pcrLength);
-
-                    // any other result is a fatal error
-                    pAssert_BOOL(pcrInitialResult == TPM_RC_SUCCESS
-                                 || pcrInitialResult == TPM_RC_PCR);
-                    if(pcrInitialResult == TPM_RC_SUCCESS && pcrLength == pcrSize)
-                    {
-                        // just use the PCR initialized by platform
-                    }
+                    // If the reset locality of the PCR is 4, then
+                    // the reset value is all one's, otherwise it is
+                    // all zero.
+                    if((s_initAttributes[pcr].resetLocality & 0x10) != 0)
+                        MemorySet(pcrData, 0xFF, pcrSize);
                     else
                     {
-                        // If the reset locality contains locality 4, then this
-                        // indicates a DRTM PCR where the reset value is all ones,
-                        // otherwise it is all zero.  Don't check with equal because
-                        // resetLocality is a bitfield of multiple values and does
-                        // not support extended localities.
-                        BYTE defaultValue = 0;
-                        if((currentPcrAttributes.resetLocality & 0x10) != 0)
-                        {
-                            defaultValue = 0xFF;
-                        }
-                        MemorySet(pcrData, defaultValue, pcrSize);
+                        MemorySet(pcrData, 0, pcrSize);
                         if(pcr == HCRTM_PCR)
-                        {
                             pcrData[pcrSize - 1] = locality;
-                        }
                     }
                 }
             }
@@ -569,11 +561,13 @@ BOOL PCRStartup(STARTUP_TYPE type,     // IN: startup type
 
 //*** PCRStateSave()
 // This function is used to save the PCR values that will be restored on TPM Resume.
-void PCRStateSave(TPM_SU type  // IN: startup type
-)
+void
+PCRStateSave(
+    TPM_SU           type           // IN: startup type
+    )
 {
-    UINT32 pcr, j;
-    UINT32 saveIndex = 0;
+    UINT32           pcr, j;
+    UINT32           saveIndex = 0;
 
     // if state save CLEAR, nothing to be done.  Return here
     if(type == TPM_SU_CLEAR)
@@ -582,30 +576,28 @@ void PCRStateSave(TPM_SU type  // IN: startup type
     // Copy PCR values to the structure that should be saved to NV
     for(pcr = 0; pcr < IMPLEMENTATION_PCR; pcr++)
     {
-        PCR_Attributes currentPcrAttributes =
-            _platPcr__GetPcrInitializationAttributes(pcr);
-
-        UINT32 stateSaved = (currentPcrAttributes.stateSave == SET) ? 1 : 0;
+        UINT32  stateSaved = (s_initAttributes[pcr].stateSave == SET) ? 1 : 0;
 
         // Iterate each hash algorithm bank
         for(j = 0; j < gp.pcrAllocated.count; j++)
         {
-            BYTE*  pcrData;
-            UINT32 pcrSize;
+            BYTE    *pcrData;
+            UINT32  pcrSize;
 
             pcrData = GetPcrPointer(gp.pcrAllocated.pcrSelections[j].hash, pcr);
 
             if(pcrData != NULL)
             {
-                pcrSize =
-                    CryptHashGetDigestSize(gp.pcrAllocated.pcrSelections[j].hash);
+                pcrSize
+                    = CryptHashGetDigestSize(gp.pcrAllocated.pcrSelections[j].hash);
 
                 if(stateSaved == 1)
                 {
                     // Restore saved PCR value
-                    BYTE* pcrSavedData;
-                    pcrSavedData = GetSavedPcrPointer(
-                        gp.pcrAllocated.pcrSelections[j].hash, saveIndex);
+                    BYTE    *pcrSavedData;
+                    pcrSavedData
+                        = GetSavedPcrPointer(gp.pcrAllocated.pcrSelections[j].hash,
+                                             saveIndex);
                     MemoryCopy(pcrSavedData, pcrData, pcrSize);
                 }
             }
@@ -622,14 +614,14 @@ void PCRStateSave(TPM_SU type  // IN: startup type
 //  Return Type: BOOL
 //      TRUE(1)         PCR is state saved
 //      FALSE(0)        PCR is not state saved
-BOOL PCRIsStateSaved(TPMI_DH_PCR handle  // IN: PCR handle to be extended
-)
+BOOL
+PCRIsStateSaved(
+    TPMI_DH_PCR      handle         // IN: PCR handle to be extended
+    )
 {
-    UINT32         pcr = handle - PCR_FIRST;
-    PCR_Attributes currentPcrAttributes =
-        _platPcr__GetPcrInitializationAttributes(pcr);
+    UINT32              pcr = handle - PCR_FIRST;
 
-    if(currentPcrAttributes.stateSave == SET)
+    if(s_initAttributes[pcr].stateSave == SET)
         return TRUE;
     else
         return FALSE;
@@ -641,14 +633,14 @@ BOOL PCRIsStateSaved(TPMI_DH_PCR handle  // IN: PCR handle to be extended
 //  Return Type: BOOL
 //      TRUE(1)         TPM2_PCR_Reset is allowed
 //      FALSE(0)        TPM2_PCR_Reset is not allowed
-BOOL PCRIsResetAllowed(TPMI_DH_PCR handle  // IN: PCR handle to be extended
-)
+BOOL
+PCRIsResetAllowed(
+    TPMI_DH_PCR      handle         // IN: PCR handle to be extended
+    )
 {
-    UINT8          commandLocality;
-    UINT8          localityBits = 1;
-    UINT32         pcr          = handle - PCR_FIRST;
-    PCR_Attributes currentPcrAttributes =
-        _platPcr__GetPcrInitializationAttributes(pcr);
+    UINT8               commandLocality;
+    UINT8               localityBits = 1;
+    UINT32              pcr = handle - PCR_FIRST;
 
     // Check for the locality
     commandLocality = _plat__LocalityGet();
@@ -660,7 +652,7 @@ BOOL PCRIsResetAllowed(TPMI_DH_PCR handle  // IN: PCR handle to be extended
 #endif
 
     localityBits = localityBits << commandLocality;
-    if((localityBits & currentPcrAttributes.resetLocality) == 0)
+    if((localityBits & s_initAttributes[pcr].resetLocality) == 0)
         return FALSE;
     else
         return TRUE;
@@ -672,8 +664,10 @@ BOOL PCRIsResetAllowed(TPMI_DH_PCR handle  // IN: PCR handle to be extended
 // then the function increments the counter. Will also bump the counter if the
 // handle is zero which means that PCR 0 can not be in the TCB group. Bump on zero
 // is used by TPM2_Clear().
-void PCRChanged(TPM_HANDLE pcrHandle  // IN: the handle of the PCR that changed.
-)
+void
+PCRChanged(
+    TPM_HANDLE       pcrHandle      // IN: the handle of the PCR that changed.
+    )
 {
     // For the reference implementation, the only change that does not cause
     // increment is a change to a PCR in the TCB group.
@@ -691,19 +685,19 @@ void PCRChanged(TPM_HANDLE pcrHandle  // IN: the handle of the PCR that changed.
 //  Return Type: BOOL
 //      TRUE(1)         extend is allowed
 //      FALSE(0)        extend is not allowed
-BOOL PCRIsExtendAllowed(TPMI_DH_PCR handle  // IN: PCR handle to be extended
-)
+BOOL
+PCRIsExtendAllowed(
+    TPMI_DH_PCR      handle         // IN: PCR handle to be extended
+    )
 {
-    UINT8          commandLocality;
-    UINT8          localityBits = 1;
-    UINT32         pcr          = handle - PCR_FIRST;
-    PCR_Attributes currentPcrAttributes =
-        _platPcr__GetPcrInitializationAttributes(pcr);
+    UINT8               commandLocality;
+    UINT8               localityBits = 1;
+    UINT32              pcr = handle - PCR_FIRST;
 
     // Check for the locality
     commandLocality = _plat__LocalityGet();
-    localityBits    = localityBits << commandLocality;
-    if((localityBits & currentPcrAttributes.extendLocality) == 0)
+    localityBits = localityBits << commandLocality;
+    if((localityBits & s_initAttributes[pcr].extendLocality) == 0)
         return FALSE;
     else
         return TRUE;
@@ -711,15 +705,17 @@ BOOL PCRIsExtendAllowed(TPMI_DH_PCR handle  // IN: PCR handle to be extended
 
 //*** PCRExtend()
 // This function is used to extend a PCR in a specific bank.
-void PCRExtend(TPMI_DH_PCR   handle,  // IN: PCR handle to be extended
-               TPMI_ALG_HASH hash,    // IN: hash algorithm of PCR
-               UINT32        size,    // IN: size of data to be extended
-               BYTE*         data     // IN: data to be extended
-)
+void
+PCRExtend(
+    TPMI_DH_PCR      handle,        // IN: PCR handle to be extended
+    TPMI_ALG_HASH    hash,          // IN: hash algorithm of PCR
+    UINT32           size,          // IN: size of data to be extended
+    BYTE            *data           // IN: data to be extended
+    )
 {
-    BYTE*      pcrData;
-    HASH_STATE hashState;
-    UINT16     pcrSize;
+    BYTE                *pcrData;
+    HASH_STATE           hashState;
+    UINT16               pcrSize;
 
     pcrData = GetPcrPointer(hash, handle - PCR_FIRST);
 
@@ -744,19 +740,20 @@ void PCRExtend(TPMI_DH_PCR   handle,  // IN: PCR handle to be extended
 //
 // As a side-effect, 'selection' is modified so that only the implemented PCR
 // will have their bits still set.
-void PCRComputeCurrentDigest(
-    TPMI_ALG_HASH       hashAlg,    // IN: hash algorithm to compute digest
-    TPML_PCR_SELECTION* selection,  // IN/OUT: PCR selection (filtered on
-                                    //     output)
-    TPM2B_DIGEST* digest            // OUT: digest
-)
+void
+PCRComputeCurrentDigest(
+    TPMI_ALG_HASH        hashAlg,       // IN: hash algorithm to compute digest
+    TPML_PCR_SELECTION  *selection,     // IN/OUT: PCR selection (filtered on
+                                        //     output)
+    TPM2B_DIGEST        *digest         // OUT: digest
+    )
 {
-    HASH_STATE          hashState;
-    TPMS_PCR_SELECTION* select;
-    BYTE*               pcrData;  // will point to a digest
-    UINT32              pcrSize;
-    UINT32              pcr;
-    UINT32              i;
+    HASH_STATE               hashState;
+    TPMS_PCR_SELECTION      *select;
+    BYTE                    *pcrData;   // will point to a digest
+    UINT32                   pcrSize;
+    UINT32                   pcr;
+    UINT32                   i;
 
     // Initialize the hash
     digest->t.size = CryptHashStart(&hashState, hashAlg);
@@ -766,8 +763,8 @@ void PCRComputeCurrentDigest(
     for(i = 0; i < selection->count; i++)
     {
         // Point to the current selection
-        select = &selection->pcrSelections[i];  // Point to the current selection
-        FilterPcr(select);  // Clear out the bits for unimplemented PCR
+        select = &selection->pcrSelections[i]; // Point to the current selection
+        FilterPcr(select);      // Clear out the bits for unimplemented PCR
 
         // Need the size of each digest
         pcrSize = CryptHashGetDigestSize(selection->pcrSelections[i].hash);
@@ -775,7 +772,7 @@ void PCRComputeCurrentDigest(
         // Iterate through the selection
         for(pcr = 0; pcr < IMPLEMENTATION_PCR; pcr++)
         {
-            if(IsPcrSelected(pcr, select))  // Is this PCR selected
+            if(IsPcrSelected(pcr, select))         // Is this PCR selected
             {
                 // Get pointer to the digest data for the bank
                 pcrData = GetPcrPointer(selection->pcrSelections[i].hash, pcr);
@@ -794,17 +791,19 @@ void PCRComputeCurrentDigest(
 // This function is used to read a list of selected PCR.  If the requested PCR
 // number exceeds the maximum number that can be output, the 'selection' is
 // adjusted to reflect the actual output PCR.
-void PCRRead(TPML_PCR_SELECTION* selection,  // IN/OUT: PCR selection (filtered on
-                                             //     output)
-             TPML_DIGEST* digest,            // OUT: digest
-             UINT32*      pcrCounter  // OUT: the current value of PCR generation
-                                      //     number
-)
+void
+PCRRead(
+    TPML_PCR_SELECTION  *selection,     // IN/OUT: PCR selection (filtered on
+                                        //     output)
+    TPML_DIGEST         *digest,        // OUT: digest
+    UINT32              *pcrCounter     // OUT: the current value of PCR generation
+                                        //     number
+    )
 {
-    TPMS_PCR_SELECTION* select;
-    BYTE*               pcrData;  // will point to a digest
-    UINT32              pcr;
-    UINT32              i;
+    TPMS_PCR_SELECTION      *select;
+    BYTE                    *pcrData;       // will point to a digest
+    UINT32                   pcr;
+    UINT32                   i;
 
     digest->count = 0;
 
@@ -812,24 +811,24 @@ void PCRRead(TPML_PCR_SELECTION* selection,  // IN/OUT: PCR selection (filtered 
     for(i = 0; i < selection->count; i++)
     {
         // Point to the current selection
-        select = &selection->pcrSelections[i];  // Point to the current selection
-        FilterPcr(select);  // Clear out the bits for unimplemented PCR
+        select = &selection->pcrSelections[i]; // Point to the current selection
+        FilterPcr(select);      // Clear out the bits for unimplemented PCR
 
         // Iterate through the selection
         for(pcr = 0; pcr < IMPLEMENTATION_PCR; pcr++)
         {
-            if(IsPcrSelected(pcr, select))  // Is this PCR selected
+            if(IsPcrSelected(pcr, select))         // Is this PCR selected
             {
                 // Check if number of digest exceed upper bound
                 if(digest->count > 7)
                 {
                     // Clear rest of the current select bitmap
                     while(pcr < IMPLEMENTATION_PCR
-                          // do not round up!
+                             // do not round up!
                           && (pcr / 8) < select->sizeofSelect)
                     {
                         // do not round up!
-                        select->pcrSelect[pcr / 8] &= (BYTE) ~(1 << (pcr % 8));
+                        select->pcrSelect[pcr / 8] &= (BYTE)~(1 << (pcr % 8));
                         pcr++;
                     }
                     // Exit inner loop
@@ -855,8 +854,7 @@ void PCRRead(TPML_PCR_SELECTION* selection,  // IN/OUT: PCR selection (filtered 
             // Clear rest of the selection
             while(i < selection->count)
             {
-                MemorySet(selection->pcrSelections[i].pcrSelect,
-                          0,
+                MemorySet(selection->pcrSelections[i].pcrSelect, 0,
                           selection->pcrSelections[i].sizeofSelect);
                 i++;
             }
@@ -876,17 +874,18 @@ void PCRRead(TPML_PCR_SELECTION* selection,  // IN/OUT: PCR selection (filtered 
 //      TPM_RC_NO_RESULT        allocate failed
 //      TPM_RC_PCR              improper allocation
 TPM_RC
-PCRAllocate(TPML_PCR_SELECTION* allocate,      // IN: required allocation
-            UINT32*             maxPCR,        // OUT: Maximum number of PCR
-            UINT32*             sizeNeeded,    // OUT: required space
-            UINT32*             sizeAvailable  // OUT: available space
-)
+PCRAllocate(
+    TPML_PCR_SELECTION  *allocate,      // IN: required allocation
+    UINT32              *maxPCR,        // OUT: Maximum number of PCR
+    UINT32              *sizeNeeded,    // OUT: required space
+    UINT32              *sizeAvailable  // OUT: available space
+    )
 {
-    UINT32             i, j, k;
-    TPML_PCR_SELECTION newAllocate;
+    UINT32                  i, j, k;
+    TPML_PCR_SELECTION      newAllocate;
     // Initialize the flags to indicate if HCRTM PCR and DRTM PCR are allocated.
-    BOOL pcrHcrtm = FALSE;
-    BOOL pcrDrtm  = FALSE;
+    BOOL                    pcrHcrtm = FALSE;
+    BOOL                    pcrDrtm = FALSE;
 
     // Create the expected new PCR allocation based on the existing allocation
     // and the new input:
@@ -905,7 +904,8 @@ PCRAllocate(TPML_PCR_SELECTION* allocate,      // IN: required allocation
             // has all the supported hash algorithms with an assigned bank
             // (possibly empty).  So there must be a match for any new bank
             // allocation from the input.
-            if(newAllocate.pcrSelections[j].hash == allocate->pcrSelections[i].hash)
+            if(newAllocate.pcrSelections[j].hash ==
+               allocate->pcrSelections[i].hash)
             {
                 newAllocate.pcrSelections[j] = allocate->pcrSelections[i];
                 break;
@@ -916,7 +916,7 @@ PCRAllocate(TPML_PCR_SELECTION* allocate,      // IN: required allocation
     }
 
     // Max PCR in a bank is MIN(implemented PCR, PCR with attributes defined)
-    *maxPCR = _platPcr__NumberOfPcrs();
+    *maxPCR = sizeof(s_initAttributes) / sizeof(PCR_Attributes);
     if(*maxPCR > IMPLEMENTATION_PCR)
         *maxPCR = IMPLEMENTATION_PCR;
 
@@ -924,30 +924,29 @@ PCRAllocate(TPML_PCR_SELECTION* allocate,      // IN: required allocation
     *sizeNeeded = 0;
     for(i = 0; i < newAllocate.count; i++)
     {
-        UINT32 digestSize = CryptHashGetDigestSize(newAllocate.pcrSelections[i].hash);
+        UINT32      digestSize
+            = CryptHashGetDigestSize(newAllocate.pcrSelections[i].hash);
 #if defined(DRTM_PCR)
         // Make sure that we end up with at least one DRTM PCR
-        pcrDrtm = pcrDrtm
-                  || TestBit(DRTM_PCR,
-                             newAllocate.pcrSelections[i].pcrSelect,
-                             newAllocate.pcrSelections[i].sizeofSelect);
+        pcrDrtm = pcrDrtm || TestBit(DRTM_PCR,
+                                     newAllocate.pcrSelections[i].pcrSelect,
+                                     newAllocate.pcrSelections[i].sizeofSelect);
 
-#else  // if DRTM PCR is not required, indicate that the allocation is OK
+#else   // if DRTM PCR is not required, indicate that the allocation is OK
         pcrDrtm = TRUE;
 #endif
 
 #if defined(HCRTM_PCR)
         // and one HCRTM PCR (since this is usually PCR 0...)
-        pcrHcrtm = pcrHcrtm
-                   || TestBit(HCRTM_PCR,
-                              newAllocate.pcrSelections[i].pcrSelect,
-                              newAllocate.pcrSelections[i].sizeofSelect);
+        pcrHcrtm = pcrHcrtm || TestBit(HCRTM_PCR,
+                                       newAllocate.pcrSelections[i].pcrSelect,
+                                       newAllocate.pcrSelections[i].sizeofSelect);
 #else
         pcrHcrtm = TRUE;
 #endif
         for(j = 0; j < newAllocate.pcrSelections[i].sizeofSelect; j++)
         {
-            BYTE mask = 1;
+            BYTE        mask = 1;
             for(k = 0; k < 8; k++)
             {
                 if((newAllocate.pcrSelections[i].pcrSelect[j] & mask) != 0)
@@ -978,15 +977,17 @@ PCRAllocate(TPML_PCR_SELECTION* allocate,      // IN: required allocation
 // This function is used to set the designated PCR in all banks to an initial value.
 // The initial value is signed and will be sign extended into the entire PCR.
 //
-void PCRSetValue(TPM_HANDLE handle,       // IN: the handle of the PCR to set
-                 INT8       initialValue  // IN: the value to set
-)
+void
+PCRSetValue(
+    TPM_HANDLE       handle,        // IN: the handle of the PCR to set
+    INT8             initialValue   // IN: the value to set
+    )
 {
-    int           i;
-    UINT32        pcr = handle - PCR_FIRST;
-    TPMI_ALG_HASH hash;
-    UINT16        digestSize;
-    BYTE*         pcrData;
+    int              i;
+    UINT32           pcr = handle - PCR_FIRST;
+    TPMI_ALG_HASH    hash;
+    UINT16           digestSize;
+    BYTE            *pcrData;
 
     // Iterate supported PCR bank algorithms to reset
     for(i = 0; i < HASH_COUNT; i++)
@@ -1020,9 +1021,12 @@ void PCRSetValue(TPM_HANDLE handle,       // IN: the handle of the PCR to set
 //*** PCRResetDynamics
 // This function is used to reset a dynamic PCR to 0.  This function is used in
 // DRTM sequence.
-void PCRResetDynamics(void)
+void
+PCRResetDynamics(
+    void
+    )
 {
-    UINT32 pcr, i;
+    UINT32              pcr, i;
 
     // Initialize PCR values
     for(pcr = 0; pcr < IMPLEMENTATION_PCR; pcr++)
@@ -1030,10 +1034,8 @@ void PCRResetDynamics(void)
         // Iterate each hash algorithm bank
         for(i = 0; i < gp.pcrAllocated.count; i++)
         {
-            BYTE*          pcrData;
-            UINT32         pcrSize;
-            PCR_Attributes currentPcrAttributes =
-                _platPcr__GetPcrInitializationAttributes(pcr);
+            BYTE    *pcrData;
+            UINT32  pcrSize;
 
             pcrData = GetPcrPointer(gp.pcrAllocated.pcrSelections[i].hash, pcr);
 
@@ -1044,7 +1046,7 @@ void PCRResetDynamics(void)
 
                 // Reset PCR
                 // Any PCR can be reset by locality 4 should be reset to 0
-                if((currentPcrAttributes.resetLocality & 0x10) != 0)
+                if((s_initAttributes[pcr].resetLocality & 0x10) != 0)
                     MemorySet(pcrData, 0, pcrSize);
             }
         }
@@ -1058,9 +1060,10 @@ void PCRResetDynamics(void)
 //      YES         if the return count is 0
 //      NO          if the return count is not 0
 TPMI_YES_NO
-PCRCapGetAllocation(UINT32              count,        // IN: count of return
-                    TPML_PCR_SELECTION* pcrSelection  // OUT: PCR allocation list
-)
+PCRCapGetAllocation(
+    UINT32               count,         // IN: count of return
+    TPML_PCR_SELECTION  *pcrSelection   // OUT: PCR allocation list
+    )
 {
     if(count == 0)
     {
@@ -1076,9 +1079,11 @@ PCRCapGetAllocation(UINT32              count,        // IN: count of return
 
 //*** PCRSetSelectBit()
 // This function sets a bit in a bitmap array.
-static void PCRSetSelectBit(UINT32 pcr,    // IN: PCR number
-                            BYTE*  bitmap  // OUT: bit map to be set
-)
+static void
+PCRSetSelectBit(
+    UINT32           pcr,           // IN: PCR number
+    BYTE            *bitmap         // OUT: bit map to be set
+    )
 {
     bitmap[pcr / 8] |= (1 << (pcr % 8));
     return;
@@ -1089,10 +1094,14 @@ static void PCRSetSelectBit(UINT32 pcr,    // IN: PCR number
 //  Return Type: BOOL
 //      TRUE(1)         the property type is implemented
 //      FALSE(0)        the property type is not implemented
-BOOL PCRGetProperty(TPM_PT_PCR property, TPMS_TAGGED_PCR_SELECT* select)
+static BOOL
+PCRGetProperty(
+    TPM_PT_PCR               property,
+    TPMS_TAGGED_PCR_SELECT  *select
+    )
 {
-    UINT32 pcr;
-    UINT32 groupIndex;
+    UINT32              pcr;
+    UINT32              groupIndex;
 
     select->tag = property;
     // Always set the bitmap to be the size of all PCR
@@ -1104,58 +1113,55 @@ BOOL PCRGetProperty(TPM_PT_PCR property, TPMS_TAGGED_PCR_SELECT* select)
     // Collecting properties
     for(pcr = 0; pcr < IMPLEMENTATION_PCR; pcr++)
     {
-        PCR_Attributes currentPcrAttributes =
-            _platPcr__GetPcrInitializationAttributes(pcr);
-
         switch(property)
         {
             case TPM_PT_PCR_SAVE:
-                if(currentPcrAttributes.stateSave == SET)
+                if(s_initAttributes[pcr].stateSave == SET)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_EXTEND_L0:
-                if((currentPcrAttributes.extendLocality & 0x01) != 0)
+                if((s_initAttributes[pcr].extendLocality & 0x01) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_RESET_L0:
-                if((currentPcrAttributes.resetLocality & 0x01) != 0)
+                if((s_initAttributes[pcr].resetLocality & 0x01) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_EXTEND_L1:
-                if((currentPcrAttributes.extendLocality & 0x02) != 0)
+                if((s_initAttributes[pcr].extendLocality & 0x02) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_RESET_L1:
-                if((currentPcrAttributes.resetLocality & 0x02) != 0)
+                if((s_initAttributes[pcr].resetLocality & 0x02) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_EXTEND_L2:
-                if((currentPcrAttributes.extendLocality & 0x04) != 0)
+                if((s_initAttributes[pcr].extendLocality & 0x04) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_RESET_L2:
-                if((currentPcrAttributes.resetLocality & 0x04) != 0)
+                if((s_initAttributes[pcr].resetLocality & 0x04) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_EXTEND_L3:
-                if((currentPcrAttributes.extendLocality & 0x08) != 0)
+                if((s_initAttributes[pcr].extendLocality & 0x08) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_RESET_L3:
-                if((currentPcrAttributes.resetLocality & 0x08) != 0)
+                if((s_initAttributes[pcr].resetLocality & 0x08) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_EXTEND_L4:
-                if((currentPcrAttributes.extendLocality & 0x10) != 0)
+                if((s_initAttributes[pcr].extendLocality & 0x10) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_RESET_L4:
-                if((currentPcrAttributes.resetLocality & 0x10) != 0)
+                if((s_initAttributes[pcr].resetLocality & 0x10) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
             case TPM_PT_PCR_DRTM_RESET:
                 // DRTM reset PCRs are the PCR reset by locality 4
-                if((currentPcrAttributes.resetLocality & 0x10) != 0)
+                if((s_initAttributes[pcr].resetLocality & 0x10) != 0)
                     PCRSetSelectBit(pcr, select->pcrSelect);
                 break;
 #if defined NUM_POLICY_PCR_GROUP && NUM_POLICY_PCR_GROUP > 0
@@ -1192,24 +1198,24 @@ BOOL PCRGetProperty(TPM_PT_PCR property, TPMS_TAGGED_PCR_SELECT* select)
 //      YES         if no more property is available
 //      NO          if there are more properties not reported
 TPMI_YES_NO
-PCRCapGetProperties(TPM_PT_PCR property,  // IN: the starting PCR property
-                    UINT32     count,     // IN: count of returned properties
-                    TPML_TAGGED_PCR_PROPERTY* select  // OUT: PCR select
-)
+PCRCapGetProperties(
+    TPM_PT_PCR                   property,      // IN: the starting PCR property
+    UINT32                       count,         // IN: count of returned properties
+    TPML_TAGGED_PCR_PROPERTY    *select         // OUT: PCR select
+    )
 {
-    TPMI_YES_NO more = NO;
-    UINT32      i;
+    TPMI_YES_NO     more = NO;
+    UINT32          i;
 
     // Initialize output property list
     select->count = 0;
 
     // The maximum count of properties we may return is MAX_PCR_PROPERTIES
-    if(count > MAX_PCR_PROPERTIES)
-        count = MAX_PCR_PROPERTIES;
+    if(count > MAX_PCR_PROPERTIES) count = MAX_PCR_PROPERTIES;
 
     // TPM_PT_PCR_FIRST is defined as 0 in spec.  It ensures that property
     // value would never be less than TPM_PT_PCR_FIRST
-    MUST_BE(TPM_PT_PCR_FIRST == 0);
+    cAssert(TPM_PT_PCR_FIRST == 0);
 
     // Iterate PCR properties. TPM_PT_PCR_LAST is the index of the last property
     // implemented on the TPM.
@@ -1241,13 +1247,14 @@ PCRCapGetProperties(TPM_PT_PCR property,  // IN: the starting PCR property
 //      YES         if there are more handles available
 //      NO          all the available handles has been returned
 TPMI_YES_NO
-PCRCapGetHandles(TPMI_DH_PCR  handle,     // IN: start handle
-                 UINT32       count,      // IN: count of returned handles
-                 TPML_HANDLE* handleList  // OUT: list of handle
-)
+PCRCapGetHandles(
+    TPMI_DH_PCR      handle,        // IN: start handle
+    UINT32           count,         // IN: count of returned handles
+    TPML_HANDLE     *handleList     // OUT: list of handle
+    )
 {
-    TPMI_YES_NO more = NO;
-    UINT32      i;
+    TPMI_YES_NO     more = NO;
+    UINT32          i;
 
     pAssert(HandleGetType(handle) == TPM_HT_PCR);
 
@@ -1255,8 +1262,7 @@ PCRCapGetHandles(TPMI_DH_PCR  handle,     // IN: start handle
     handleList->count = 0;
 
     // The maximum count of handles we may return is MAX_CAP_HANDLES
-    if(count > MAX_CAP_HANDLES)
-        count = MAX_CAP_HANDLES;
+    if(count > MAX_CAP_HANDLES) count = MAX_CAP_HANDLES;
 
     // Iterate PCR handle range
     for(i = handle & HR_HANDLE_MASK; i <= PCR_LAST; i++)
@@ -1277,17 +1283,4 @@ PCRCapGetHandles(TPMI_DH_PCR  handle,     // IN: start handle
         }
     }
     return more;
-}
-
-//*** PCRCapGetOneHandle()
-// This function is used to check whether a PCR handle exists.
-BOOL PCRCapGetOneHandle(TPMI_DH_PCR handle)  // IN: handle
-{
-    pAssert(HandleGetType(handle) == TPM_HT_PCR);
-
-    if((handle & HR_HANDLE_MASK) <= PCR_LAST)
-    {
-        return TRUE;
-    }
-    return FALSE;
 }

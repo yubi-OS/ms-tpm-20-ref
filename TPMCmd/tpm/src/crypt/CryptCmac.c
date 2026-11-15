@@ -1,7 +1,41 @@
+/* Microsoft Reference Implementation for TPM 2.0
+ *
+ *  The copyright in this software is being made available under the BSD License,
+ *  included below. This software may be subject to other third party and
+ *  contributor rights, including patent rights, and no such rights are granted
+ *  under this license.
+ *
+ *  Copyright (c) Microsoft Corporation
+ *
+ *  All rights reserved.
+ *
+ *  BSD License
+ *
+ *  Redistribution and use in source and binary forms, with or without modification,
+ *  are permitted provided that the following conditions are met:
+ *
+ *  Redistributions of source code must retain the above copyright notice, this list
+ *  of conditions and the following disclaimer.
+ *
+ *  Redistributions in binary form must reproduce the above copyright notice, this
+ *  list of conditions and the following disclaimer in the documentation and/or
+ *  other materials provided with the distribution.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ *  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ *  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ *  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 //** Introduction
 //
 // This file contains the implementation of the message authentication codes based
-// on a symmetric block cipher. These functions only use the single block
+// on a symmetric block cipher. These functions only use the single block 
 // encryption functions of the selected symmetric cryptographic library.
 
 //** Includes, Defines, and Typedefs
@@ -20,24 +54,30 @@
 // and block cipher algorithm.
 UINT16
 CryptCmacStart(
-    SMAC_STATE* state, TPMU_PUBLIC_PARMS* keyParms, TPM_ALG_ID macAlg, TPM2B* key)
+    SMAC_STATE          *state,
+    TPMU_PUBLIC_PARMS   *keyParms,
+    TPM_ALG_ID           macAlg,
+    TPM2B               *key
+)
 {
-    tpmCmacState_t*      cState = &state->state.cmac;
-    TPMT_SYM_DEF_OBJECT* def    = &keyParms->symDetail.sym;
-    //
+    tpmCmacState_t      *cState = &state->state.cmac;
+    TPMT_SYM_DEF_OBJECT *def = &keyParms->symDetail.sym;
+//
     if(macAlg != TPM_ALG_CMAC)
         return 0;
     // set up the encryption algorithm and parameters
-    cState->symAlg      = def->algorithm;
+    cState->symAlg = def->algorithm;
     cState->keySizeBits = def->keyBits.sym;
-    cState->iv.t.size = CryptGetSymmetricBlockSize(def->algorithm, def->keyBits.sym);
+    cState->iv.t.size = CryptGetSymmetricBlockSize(def->algorithm, 
+                                                   def->keyBits.sym);
     MemoryCopy2B(&cState->symKey.b, key, sizeof(cState->symKey.t.buffer));
 
     // Set up the dispatch methods for the CMAC
     state->smacMethods.data = CryptCmacData;
-    state->smacMethods.end  = CryptCmacEnd;
+    state->smacMethods.end = CryptCmacEnd;
     return cState->iv.t.size;
 }
+
 
 //*** CryptCmacData()
 // This function is used to add data to the CMAC sequence computation. The function
@@ -47,17 +87,22 @@ CryptCmacStart(
 // even if the buffer is full. The last data block of a sequence will not be
 // encrypted until the call to CryptCmacEnd(). This is to allow the proper subkey
 // to be computed and applied before the last block is encrypted.
-void CryptCmacData(SMAC_STATES* state, UINT32 size, const BYTE* buffer)
+void
+CryptCmacData(
+    SMAC_STATES         *state,
+    UINT32               size,
+    const BYTE          *buffer
+)
 {
-    tpmCmacState_t*         cmacState     = &state->cmac;
-    TPM_ALG_ID              algorithm     = cmacState->symAlg;
-    BYTE*                   key           = cmacState->symKey.t.buffer;
-    UINT16                  keySizeInBits = cmacState->keySizeBits;
-    tpmCryptKeySchedule_t   keySchedule;
-    TpmCryptSetSymKeyCall_t encrypt;
-    //
+    tpmCmacState_t          *cmacState = &state->cmac;
+    TPM_ALG_ID               algorithm = cmacState->symAlg;
+    BYTE                    *key = cmacState->symKey.t.buffer;
+    UINT16                   keySizeInBits = cmacState->keySizeBits;
+    tpmCryptKeySchedule_t    keySchedule;
+    TpmCryptSetSymKeyCall_t  encrypt;
+//
     // Set up the encryption values based on the algorithm
-    switch(algorithm)
+    switch (algorithm)
     {
         FOR_EACH_SYM(ENCRYPT_CASE)
         default:
@@ -70,7 +115,7 @@ void CryptCmacData(SMAC_STATES* state, UINT32 size, const BYTE* buffer)
             ENCRYPT(&keySchedule, cmacState->iv.t.buffer, cmacState->iv.t.buffer);
             cmacState->bcount = 0;
         }
-        for(; (size > 0) && (cmacState->bcount < cmacState->iv.t.size);
+        for(;(size > 0) && (cmacState->bcount < cmacState->iv.t.size);
             size--, cmacState->bcount++)
         {
             cmacState->iv.t.buffer[cmacState->bcount] ^= *buffer++;
@@ -82,24 +127,28 @@ void CryptCmacData(SMAC_STATES* state, UINT32 size, const BYTE* buffer)
 // This is the completion function for the CMAC. It does padding, if needed, and
 // selects the subkey to be applied before the last block is encrypted.
 UINT16
-CryptCmacEnd(SMAC_STATES* state, UINT32 outSize, BYTE* outBuffer)
+CryptCmacEnd(
+    SMAC_STATES             *state,
+    UINT32                   outSize,
+    BYTE                    *outBuffer
+)
 {
-    tpmCmacState_t* cState = &state->cmac;
-    // Need to set algorithm, key, and keySizeInBits in the local context so that
+    tpmCmacState_t          *cState = &state->cmac;
+    // Need to set algorithm, key, and keySizeInBits in the local context so that  
     // the SELECT and ENCRYPT macros will work here
-    TPM_ALG_ID              algorithm     = cState->symAlg;
-    BYTE*                   key           = cState->symKey.t.buffer;
-    UINT16                  keySizeInBits = cState->keySizeBits;
-    tpmCryptKeySchedule_t   keySchedule;
-    TpmCryptSetSymKeyCall_t encrypt;
-    TPM2B_IV                subkey = {{0, {0}}};
-    BOOL                    xorVal;
-    UINT16                  i;
+    TPM_ALG_ID               algorithm = cState->symAlg;
+    BYTE                    *key = cState->symKey.t.buffer;
+    UINT16                   keySizeInBits = cState->keySizeBits;
+    tpmCryptKeySchedule_t    keySchedule;
+    TpmCryptSetSymKeyCall_t  encrypt;
+    TPM2B_IV                 subkey = {{0, {0}}};
+    BOOL                     xorVal;
+    UINT16                   i;
 
     subkey.t.size = cState->iv.t.size;
     // Encrypt a block of zero
     // Set up the encryption values based on the algorithm
-    switch(algorithm)
+    switch (algorithm)
     {
         FOR_EACH_SYM(ENCRYPT_CASE)
         default:
@@ -136,3 +185,4 @@ CryptCmacEnd(SMAC_STATES* state, UINT32 outSize, BYTE* outBuffer)
     return i;
 }
 #endif
+

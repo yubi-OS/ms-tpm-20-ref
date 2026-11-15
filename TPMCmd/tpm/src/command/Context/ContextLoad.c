@@ -1,10 +1,43 @@
+/* Microsoft Reference Implementation for TPM 2.0
+ *
+ *  The copyright in this software is being made available under the BSD License,
+ *  included below. This software may be subject to other third party and
+ *  contributor rights, including patent rights, and no such rights are granted
+ *  under this license.
+ *
+ *  Copyright (c) Microsoft Corporation
+ *
+ *  All rights reserved.
+ *
+ *  BSD License
+ *
+ *  Redistribution and use in source and binary forms, with or without modification,
+ *  are permitted provided that the following conditions are met:
+ *
+ *  Redistributions of source code must retain the above copyright notice, this list
+ *  of conditions and the following disclaimer.
+ *
+ *  Redistributions in binary form must reproduce the above copyright notice, this
+ *  list of conditions and the following disclaimer in the documentation and/or
+ *  other materials provided with the distribution.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ *  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ *  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ *  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 #include "Tpm.h"
+#include "ContextLoad_fp.h"
 
 #if CC_ContextLoad  // Conditional expansion of this file
 
-#  include "ContextLoad_fp.h"
-#  include "Marshal.h"
-#  include "Context_spt_fp.h"
+#include "Context_spt_fp.h"
 
 /*(See part 3 specification)
 // Load context
@@ -21,22 +54,23 @@
 //      TPM_RC_SESSION_MEMORY       no free session slots
 //      TPM_RC_SIZE                 incorrect context blob size
 TPM_RC
-TPM2_ContextLoad(ContextLoad_In*  in,  // IN: input parameter list
-                 ContextLoad_Out* out  // OUT: output parameter list
-)
+TPM2_ContextLoad(
+    ContextLoad_In      *in,            // IN: input parameter list
+    ContextLoad_Out     *out            // OUT: output parameter list
+    )
 {
-    TPM_RC        result;
-    TPM2B_DIGEST  integrityToCompare;
-    TPM2B_DIGEST  integrity;
-    BYTE*         buffer;  // defined to save some typing
-    INT32         size;    // defined to save some typing
-    TPM_HT        handleType;
-    TPM2B_SYM_KEY symKey;
-    TPM2B_IV      iv;
+    TPM_RC              result;
+    TPM2B_DIGEST        integrityToCompare;
+    TPM2B_DIGEST        integrity;
+    BYTE                *buffer;    // defined to save some typing
+    INT32               size;       // defined to save some typing
+    TPM_HT              handleType;
+    TPM2B_SYM_KEY       symKey;
+    TPM2B_IV            iv;
 
-    // Input Validation
+// Input Validation
 
-    // See discussion about the context format in TPM2_ContextSave Detailed Actions
+// See discussion about the context format in TPM2_ContextSave Detailed Actions
 
     // IF this is a session context, make sure that the sequence number is
     // consistent with the version in the slot
@@ -46,7 +80,7 @@ TPM2_ContextLoad(ContextLoad_In*  in,  // IN: input parameter list
 
     // Get integrity from context blob
     buffer = in->context.contextBlob.t.buffer;
-    size   = (INT32)in->context.contextBlob.t.size;
+    size = (INT32)in->context.contextBlob.t.size;
     result = TPM2B_DIGEST_Unmarshal(&integrity, &buffer, &size);
     if(result != TPM_RC_SUCCESS)
         return result;
@@ -67,27 +101,17 @@ TPM2_ContextLoad(ContextLoad_In*  in,  // IN: input parameter list
     // of integrity protected and encrypted bytes.
 
     // Compute context integrity
-    result = ComputeContextIntegrity(&in->context, &integrityToCompare);
-    if(result != TPM_RC_SUCCESS)
-        return result;
+    ComputeContextIntegrity(&in->context, &integrityToCompare);
 
     // Compare integrity
     if(!MemoryEqual2B(&integrity.b, &integrityToCompare.b))
         return TPM_RCS_INTEGRITY + RC_ContextLoad_context;
     // Compute context encryption key
-    result = ComputeContextProtectionKey(&in->context, &symKey, &iv);
-    if(result != TPM_RC_SUCCESS)
-        return result;
+    ComputeContextProtectionKey(&in->context, &symKey, &iv);
 
     // Decrypt context data in place
-    CryptSymmetricDecrypt(buffer,
-                          CONTEXT_ENCRYPT_ALG,
-                          CONTEXT_ENCRYPT_KEY_BITS,
-                          symKey.t.buffer,
-                          &iv,
-                          TPM_ALG_CFB,
-                          size,
-                          buffer);
+    CryptSymmetricDecrypt(buffer, CONTEXT_ENCRYPT_ALG, CONTEXT_ENCRYPT_KEY_BITS,
+                          symKey.t.buffer, &iv, TPM_ALG_CFB, size, buffer);
     // See if the fingerprint value matches. If not, it is symptomatic of either
     // a broken TPM or that the TPM is under attack so go into failure mode.
     if(!MemoryEqual(buffer, &in->context.sequence, sizeof(in->context.sequence)))
@@ -104,7 +128,7 @@ TPM2_ContextLoad(ContextLoad_In*  in,  // IN: input parameter list
     {
         case TPM_HT_TRANSIENT:
         {
-            OBJECT* outObject;
+            OBJECT      *outObject;
 
             if(size > (INT32)sizeof(OBJECT))
                 FAIL(FATAL_ERROR_INTERNAL);
@@ -118,8 +142,8 @@ TPM2_ContextLoad(ContextLoad_In*  in,  // IN: input parameter list
                 return TPM_RCS_HIERARCHY + RC_ContextLoad_context;
 
             // Restore object. If there is no empty space, indicate as much
-            outObject =
-                ObjectContextLoad((ANY_OBJECT_BUFFER*)buffer, &out->loadedHandle);
+            outObject = ObjectContextLoad((ANY_OBJECT_BUFFER *)buffer,
+                                          &out->loadedHandle);
             if(outObject == NULL)
                 return TPM_RC_OBJECT_MEMORY;
 
@@ -143,8 +167,8 @@ TPM2_ContextLoad(ContextLoad_In*  in,  // IN: input parameter list
 
             // Restore session.  A TPM_RC_SESSION_MEMORY, TPM_RC_CONTEXT_GAP error
             // may be returned at this point
-            result =
-                SessionContextLoad((SESSION_BUF*)buffer, &in->context.savedHandle);
+            result = SessionContextLoad((SESSION_BUF *)buffer,
+                                        &in->context.savedHandle);
             if(result != TPM_RC_SUCCESS)
                 return result;
 
@@ -166,4 +190,4 @@ TPM2_ContextLoad(ContextLoad_In*  in,  // IN: input parameter list
     return TPM_RC_SUCCESS;
 }
 
-#endif  // CC_ContextLoad
+#endif // CC_ContextLoad

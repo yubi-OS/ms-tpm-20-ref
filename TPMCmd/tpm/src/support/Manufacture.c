@@ -1,3 +1,37 @@
+/* Microsoft Reference Implementation for TPM 2.0
+ *
+ *  The copyright in this software is being made available under the BSD License,
+ *  included below. This software may be subject to other third party and
+ *  contributor rights, including patent rights, and no such rights are granted
+ *  under this license.
+ *
+ *  Copyright (c) Microsoft Corporation
+ *
+ *  All rights reserved.
+ *
+ *  BSD License
+ *
+ *  Redistribution and use in source and binary forms, with or without modification,
+ *  are permitted provided that the following conditions are met:
+ *
+ *  Redistributions of source code must retain the above copyright notice, this list
+ *  of conditions and the following disclaimer.
+ *
+ *  Redistributions in binary form must reproduce the above copyright notice, this
+ *  list of conditions and the following disclaimer in the documentation and/or
+ *  other materials provided with the distribution.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ *  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ *  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ *  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 //** Description
 // This file contains the function that performs the "manufacturing" of the TPM
 // in a simulated environment. These functions should not be used outside of
@@ -14,43 +48,33 @@
 // This function initializes the TPM values in preparation for the TPM's first
 // use. This function will fail if previously called. The TPM can be re-manufactured
 // by calling TPM_Teardown() first and then calling this function again.
-// NV must be enabled first (typically with NvPowerOn() via _TPM_Init)
-//
-// return type: int
-//      -2          NV System not available
-//      -1          FAILURE - System is incorrectly compiled.
+//  Return Type: int
+//      -1          failure 
 //      0           success
 //      1           manufacturing process previously performed
-LIB_EXPORT int TPM_Manufacture(
-    int firstTime  // IN: indicates if this is the first call from
-                   //     main()
-)
+LIB_EXPORT int
+TPM_Manufacture(
+    int             firstTime       // IN: indicates if this is the first call from
+                                    //     main()
+    )
 {
-    TPM_SU orderlyShutdown;
+    TPM_SU          orderlyShutdown;
 
-#if RUNTIME_SIZE_CHECKS
+#if RUNTIME_SIZE_CHECKS 
     // Call the function to verify the sizes of values that result from different
     // compile options.
     if(!TpmSizeChecks())
-        return MANUF_INVALID_CONFIG;
+        return -1;
 #endif
 #if LIBRARY_COMPATIBILITY_CHECK
-    // Make sure that the attached library performs as expected.
-    if(!ExtMath_Debug_CompatibilityCheck())
-        return MANUF_INVALID_CONFIG;
+// Make sure that the attached library performs as expected.
+    if(!MathLibraryCompatibilityCheck())
+        return -1;
 #endif
 
     // If TPM has been manufactured, return indication.
     if(!firstTime && g_manufactured)
-        return MANUF_ALREADY_DONE;
-
-    // trigger failure mode if called in error.
-    int nvReadyState = _plat__GetNvReadyState();
-    pAssert(nvReadyState == NV_READY);  // else failure mode
-    if(nvReadyState != NV_READY)
-    {
-        return MANUF_NV_NOT_READY;
-    }
+        return 1;
 
     // Do power on initializations of the cryptographic libraries.
     CryptInit();
@@ -66,7 +90,7 @@ LIB_EXPORT int TPM_Manufacture(
     CryptStartup(SU_RESET);
 
     // default configuration for PCR
-    PCRManufacture();
+    PCRSimStart();
 
     // initialize pre-installed hierarchy data
     // This should happen after NV is initialized because hierarchy data is
@@ -87,13 +111,12 @@ LIB_EXPORT int TPM_Manufacture(
     NV_WRITE_PERSISTENT(orderlyState, orderlyShutdown);
 
     // initialize the firmware version
-    gp.firmwareV1 = _plat__GetTpmFirmwareVersionHigh();
-    gp.firmwareV2 = _plat__GetTpmFirmwareVersionLow();
-
-    _plat__GetPlatformManufactureData(gp.platformReserved,
-                                      sizeof(gp.platformReserved));
-    NV_SYNC_PERSISTENT(platformReserved);
-
+    gp.firmwareV1 = FIRMWARE_V1;
+#ifdef FIRMWARE_V2
+    gp.firmwareV2 = FIRMWARE_V2;
+#else
+    gp.firmwareV2 = 0;
+#endif
     NV_SYNC_PERSISTENT(firmwareV1);
     NV_SYNC_PERSISTENT(firmwareV2);
 
@@ -102,7 +125,7 @@ LIB_EXPORT int TPM_Manufacture(
     NV_SYNC_PERSISTENT(totalResetCount);
 
     // initialize the clock stuff
-    go.clock     = 0;
+    go.clock = 0;
     go.clockSafe = YES;
 
     NvWrite(NV_ORDERLY_DATA, sizeof(ORDERLY_DATA), &go);
@@ -116,7 +139,7 @@ LIB_EXPORT int TPM_Manufacture(
 
     g_manufactured = TRUE;
 
-    return MANUF_OK;
+    return 0;
 }
 
 //*** TPM_TearDown()
@@ -129,27 +152,33 @@ LIB_EXPORT int TPM_Manufacture(
 //  Return Type: int
 //      0        success
 //      1        TPM not previously manufactured
-LIB_EXPORT int TPM_TearDown(void)
+LIB_EXPORT int
+TPM_TearDown(
+    void
+    )
 {
     g_manufactured = FALSE;
-    _plat__TearDown();
-    return TEARDOWN_OK;
+    return 0;
 }
+
 
 //*** TpmEndSimulation()
 // This function is called at the end of the simulation run. It is used to provoke
 // printing of any statistics that might be needed.
-LIB_EXPORT void TpmEndSimulation(void)
+LIB_EXPORT void
+TpmEndSimulation(
+    void
+    )
 {
 #if SIMULATION
     HashLibSimulationEnd();
     SymLibSimulationEnd();
     MathLibSimulationEnd();
-#  if ALG_RSA
+#if ALG_RSA
     RsaSimulationEnd();
-#  endif
-#  if ALG_ECC
+#endif
+#if ALG_ECC
     EccSimulationEnd();
-#  endif
-#endif  // SIMULATION
+#endif
+#endif // SIMULATION
 }

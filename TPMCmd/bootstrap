@@ -40,8 +40,7 @@ src_listvar () {
     suffix=$2
     var=$3
 
-    # filter out wolf files that don't build correctly and are unnecessary for openssl
-    find "${basedir}" -name "${suffix}" | LC_ALL=C sort | grep -vE 'wolf' | (printf "${var} = " && cat) | tr '\n' ' '
+    find "${basedir}" -name "${suffix}" | LC_ALL=C sort | tr '\n' ' ' | (printf "${var} = " && cat)
     echo ""
 }
 
@@ -57,3 +56,11 @@ echo "Generating file lists: src.mk"
 
 echo "Setting up build"
 ${AUTORECONF} --install --sym
+
+# A freshly checked out source tree will not build. VendorString.h must have
+# these symbols defined to build.
+echo "Setting default vendor strings"
+sed -i 's&^\/\/\(#define[[:space:]]\+FIRMWARE_V1.*\)&\1&;
+        s&^\/\/\(#define[[:space:]]\+MANUFACTURER.*\)&\1&;
+        s&^\/\/\(#define[[:space:]]\+VENDOR_STRING_1.*\)&\1&' \
+       tpm/include/VendorString.h

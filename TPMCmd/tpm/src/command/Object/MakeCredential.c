@@ -1,9 +1,43 @@
+/* Microsoft Reference Implementation for TPM 2.0
+ *
+ *  The copyright in this software is being made available under the BSD License,
+ *  included below. This software may be subject to other third party and
+ *  contributor rights, including patent rights, and no such rights are granted
+ *  under this license.
+ *
+ *  Copyright (c) Microsoft Corporation
+ *
+ *  All rights reserved.
+ *
+ *  BSD License
+ *
+ *  Redistribution and use in source and binary forms, with or without modification,
+ *  are permitted provided that the following conditions are met:
+ *
+ *  Redistributions of source code must retain the above copyright notice, this list
+ *  of conditions and the following disclaimer.
+ *
+ *  Redistributions in binary form must reproduce the above copyright notice, this
+ *  list of conditions and the following disclaimer in the documentation and/or
+ *  other materials provided with the distribution.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ *  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ *  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ *  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 #include "Tpm.h"
 #include "MakeCredential_fp.h"
 
 #if CC_MakeCredential  // Conditional expansion of this file
 
-#  include "Object_spt_fp.h"
+#include "Object_spt_fp.h"
 
 /*(See part 3 specification)
 // Make Credential with an object
@@ -16,16 +50,17 @@
 //      TPM_RC_TYPE             'handle' does not reference an asymmetric
 //                              decryption key
 TPM_RC
-TPM2_MakeCredential(MakeCredential_In*  in,  // IN: input parameter list
-                    MakeCredential_Out* out  // OUT: output parameter list
-)
+TPM2_MakeCredential(
+    MakeCredential_In   *in,            // IN: input parameter list
+    MakeCredential_Out  *out            // OUT: output parameter list
+    )
 {
-    TPM_RC     result = TPM_RC_SUCCESS;
+    TPM_RC               result = TPM_RC_SUCCESS;
 
-    OBJECT*    object;
-    TPM2B_DATA data;
+    OBJECT              *object;
+    TPM2B_DATA           data;
 
-    // Input Validation
+// Input Validation
 
     // Get object pointer
     object = HandleToObject(in->handle);
@@ -34,7 +69,8 @@ TPM2_MakeCredential(MakeCredential_In*  in,  // IN: input parameter list
     // NOTE: Needs to be restricted to have a symmetric value.
     if(!CryptIsAsymAlgorithm(object->publicArea.type)
        || !IS_ATTRIBUTE(object->publicArea.objectAttributes, TPMA_OBJECT, decrypt)
-       || !IS_ATTRIBUTE(object->publicArea.objectAttributes, TPMA_OBJECT, restricted))
+       || !IS_ATTRIBUTE(object->publicArea.objectAttributes, 
+                        TPMA_OBJECT, restricted))
         return TPM_RCS_TYPE + RC_MakeCredential_handle;
 
     // The credential information may not be larger than the digest size used for
@@ -42,7 +78,7 @@ TPM2_MakeCredential(MakeCredential_In*  in,  // IN: input parameter list
     if(in->credential.t.size > CryptHashGetDigestSize(object->publicArea.nameAlg))
         return TPM_RCS_SIZE + RC_MakeCredential_credential;
 
-    // Command Output
+// Command Output
 
     // Make encrypt key and its associated secret structure.
     out->secret.t.size = sizeof(out->secret.t.secret);
@@ -51,10 +87,10 @@ TPM2_MakeCredential(MakeCredential_In*  in,  // IN: input parameter list
         return result;
 
     // Prepare output credential data from secret
-    SecretToCredential(
-        &in->credential, &in->objectName.b, &data.b, object, &out->credentialBlob);
+    SecretToCredential(&in->credential, &in->objectName.b, &data.b,
+                       object, &out->credentialBlob);
 
     return TPM_RC_SUCCESS;
 }
 
-#endif  // CC_MakeCredential
+#endif // CC_MakeCredential

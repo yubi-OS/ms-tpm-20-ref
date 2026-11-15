@@ -1,3 +1,37 @@
+/* Microsoft Reference Implementation for TPM 2.0
+ *
+ *  The copyright in this software is being made available under the BSD License,
+ *  included below. This software may be subject to other third party and
+ *  contributor rights, including patent rights, and no such rights are granted
+ *  under this license.
+ *
+ *  Copyright (c) Microsoft Corporation
+ *
+ *  All rights reserved.
+ *
+ *  BSD License
+ *
+ *  Redistribution and use in source and binary forms, with or without modification,
+ *  are permitted provided that the following conditions are met:
+ *
+ *  Redistributions of source code must retain the above copyright notice, this list
+ *  of conditions and the following disclaimer.
+ *
+ *  Redistributions in binary form must reproduce the above copyright notice, this
+ *  list of conditions and the following disclaimer in the documentation and/or
+ *  other materials provided with the distribution.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ *  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ *  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ *  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 #include "Tpm.h"
 #include "Startup_fp.h"
 
@@ -16,13 +50,14 @@
 //                                  shutdown sequence
 
 TPM_RC
-TPM2_Startup(Startup_In* in  // IN: input parameter list
-)
+TPM2_Startup(
+    Startup_In      *in             // IN: input parameter list
+    )
 {
-    STARTUP_TYPE startup;
-    BYTE         locality = _plat__LocalityGet();
-    BOOL         OK       = TRUE;
-    //
+    STARTUP_TYPE         startup;
+    BYTE                 locality = _plat__LocalityGet();
+    BOOL                 OK = TRUE;
+//
     // The command needs NV update.
     RETURN_IF_NV_IS_NOT_AVAILABLE;
 
@@ -33,7 +68,7 @@ TPM2_Startup(Startup_In* in  // IN: input parameter list
     // redo of the NV space and since this is a feature that is hardly ever used
     // outside of the PC Client, this code just support the PC Client needs.
 
-    // Input Validation
+// Input Validation
     // Check that the locality is a supported value
     if(locality != 0 && locality != 3)
         return TPM_RC_LOCALITY;
@@ -46,21 +81,21 @@ TPM2_Startup(Startup_In* in  // IN: input parameter list
         locality = 0;
     g_StartupLocality3 = (locality == 3);
 
-#  if USE_DA_USED
+#if USE_DA_USED
     // If there was no orderly shutdown, then there might have been a write to
     // failedTries that didn't get recorded but only if g_daUsed was SET in the
     // shutdown state
     g_daUsed = (gp.orderlyState == SU_DA_USED_VALUE);
     if(g_daUsed)
         gp.orderlyState = SU_NONE_VALUE;
-#  endif
+#endif
 
     g_prevOrderlyState = gp.orderlyState;
 
     // If there was a proper shutdown, then the startup modifiers are in the
     // orderlyState. Turn them off in the copy.
     if(IS_ORDERLY(g_prevOrderlyState))
-        g_prevOrderlyState &= ~(PRE_STARTUP_FLAG | STARTUP_LOCALITY_3);
+        g_prevOrderlyState &=  ~(PRE_STARTUP_FLAG | STARTUP_LOCALITY_3);
     // If this is a Resume,
     if(in->startupType == TPM_SU_STATE)
     {
@@ -83,7 +118,7 @@ TPM2_Startup(Startup_In* in  // IN: input parameter list
     // Clean up the gp state
     gp.orderlyState = g_prevOrderlyState;
 
-    // Internal Date Update
+// Internal Date Update
     if((gp.orderlyState == TPM_SU_STATE) && (g_nvOk == TRUE))
     {
         // Always read the data that is only cleared on a Reset because this is not
@@ -112,14 +147,13 @@ TPM2_Startup(Startup_In* in  // IN: input parameter list
     // command has been received.
     OK = OK && TPMRegisterStartup();
 
-#  if VENDOR_PERMANENT_AUTH_ENABLED == YES
-    // Read the platform unique value that is used as VENDOR_PERMANENT_AUTH_HANDLE
+    // Read the platform unique value that is used as VENDOR_PERMANENT
     // authorization value
-    g_platformUniqueAuth.t.size = (UINT16)_plat__GetUniqueAuth(
-        1, sizeof(g_platformUniqueAuth.t.buffer), g_platformUniqueAuth.t.buffer);
-#  endif
+    g_platformUniqueDetails.t.size
+        = (UINT16)_plat__GetUnique(1, sizeof(g_platformUniqueDetails.t.buffer),
+                                   g_platformUniqueDetails.t.buffer);
 
-    // Start up subsystems
+// Start up subsystems
     // Start set the safe flag
     OK = OK && TimeStartup(startup);
 
@@ -136,11 +170,9 @@ TPM2_Startup(Startup_In* in  // IN: input parameter list
     OK = OK && CommandAuditStartup(startup);
 
     // Restore the ACT
-#  if ACT_SUPPORT
     OK = OK && ActStartup(startup);
-#  endif
 
-    // The following code was moved from Time.c where it made no sense
+//// The following code was moved from Time.c where it made no sense
     if(OK)
     {
         switch(startup)
@@ -154,7 +186,6 @@ TPM2_Startup(Startup_In* in  // IN: input parameter list
                 gr.clearCount++;
                 gr.restartCount++;
                 break;
-            case SU_RESET:
             default:
                 // Reset object context ID to 0
                 gr.objectContextID = 0;
@@ -201,7 +232,7 @@ TPM2_Startup(Startup_In* in  // IN: input parameter list
     // Initialize the orderly shut down flag for this cycle to SU_NONE_VALUE.
     gp.orderlyState = SU_NONE_VALUE;
 
-    OK              = OK && NV_SYNC_PERSISTENT(orderlyState);
+    OK = OK && NV_SYNC_PERSISTENT(orderlyState);
 
     // This can be reset after the first completion of a TPM2_Startup() after
     // a power loss. It can probably be reset earlier but this is an OK place.
@@ -211,4 +242,4 @@ TPM2_Startup(Startup_In* in  // IN: input parameter list
     return (OK) ? TPM_RC_SUCCESS : TPM_RC_FAILURE;
 }
 
-#endif  // CC_Startup
+#endif // CC_Startup
